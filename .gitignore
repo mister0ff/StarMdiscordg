@@ -1,2 +1,5 @@
-node_modules
-.DS_Store
+.godot/
+build/
+*.translation
+export_credentials.cfg
+*.keystore

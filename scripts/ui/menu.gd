@@ -313,7 +313,7 @@ func _make_avatar(sz: Vector2i) -> SubViewportContainer:
 
 # ------------------------------------------------------------ tela inicial
 func show_main() -> void:
-	_begin("main", Color(0, 0, 0, 0.18))
+	_begin("main", Color(0.10, 0.16, 0.28, 1.0))
 	var cc := CenterContainer.new()
 	cc.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_content.add_child(cc)
@@ -348,8 +348,6 @@ func show_main() -> void:
 	var nick := _lbl(Settings.player_name, 26, av, true)
 	nick.add_theme_color_override("font_outline_color", Color.BLACK)
 	nick.add_theme_constant_override("outline_size", 8)
-	var view := _make_avatar(Vector2i(270, 340))
-	av.add_child(view)
 	_btn("Ajustes", av, 48, func(): _page_avatar())
 
 

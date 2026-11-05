@@ -77,9 +77,8 @@ func _ready() -> void:
 		join_server("127.0.0.1", PORT)
 	else:
 		# menu primeiro: mesmo que o panorama 3D falhe no celular, a tela inicial aparece
+		_cleanup_world()
 		menu.show_main()
-		await get_tree().process_frame
-		start_panorama()
 
 
 func _notification(what: int) -> void:
@@ -106,14 +105,8 @@ func on_back_pressed() -> void:
 
 func start_panorama() -> void:
 	_cleanup_world()
-	world.refresh_tables()
-	world.setup(PANORAMA_SEED, "normal")
-	_pan_center = world.find_spawn()
-	_pan_t = 0.0
-	panorama_on = true
-	time_of_day = 0.3
-	pan_cam.global_position = _pan_center + Vector3(0, 16, 0)
-	pan_cam.make_current()
+	# fundo 3D removido da tela inicial (menu usa fundo simples)
+	panorama_on = false
 
 
 func _panorama_tick(delta: float) -> void:
@@ -256,11 +249,7 @@ func join_server(ip: String, port: int) -> void:
 
 
 func start_panorama_keep_net() -> void:
-	world.refresh_tables()
-	world.setup(PANORAMA_SEED, "normal")
-	_pan_center = world.find_spawn()
-	panorama_on = true
-	pan_cam.make_current()
+	panorama_on = false
 
 
 func _create_player() -> void:

@@ -103,6 +103,9 @@ func _begin(st: String, bg: Color) -> void:
 	visible = true
 	_bg.color = bg
 	_ignore_frame = Engine.get_process_frames()
+	var r0 := Util.safe_rect(get_viewport())
+	_content.position = r0.position
+	_content.size = r0.size
 	_avatar = null
 	_confirm = ""
 	for c in _content.get_children():

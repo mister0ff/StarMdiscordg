@@ -1,0 +1,96 @@
+name: Build Cubolândia
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+env:
+  GODOT_VERSION: "4.3"
+
+jobs:
+  android:
+    name: APK Android
+    runs-on: ubuntu-22.04
+    container:
+      image: barichello/godot-ci:4.3
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar templates de exportação
+        run: |
+          mkdir -v -p ~/.local/share/godot/export_templates/
+          if [ -d /root/.local/share/godot/export_templates/${GODOT_VERSION}.stable ]; then
+            cp -r /root/.local/share/godot/export_templates/${GODOT_VERSION}.stable ~/.local/share/godot/export_templates/ || true
+          fi
+
+      - name: Criar keystore de debug e configurar o editor
+        run: |
+          mkdir -p ~/.android ~/.config/godot
+          if [ ! -f ~/.android/debug.keystore ]; then
+            keytool -keyalg RSA -genkeypair -alias androiddebugkey -keypass android \
+              -keystore ~/.android/debug.keystore -storepass android \
+              -dname "CN=Android Debug,O=Android,C=US" -validity 9999 -deststoretype pkcs12
+          fi
+
+          JAVA="${JAVA_HOME:-$(dirname $(dirname $(readlink -f $(which javac))))}"
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/lib/android-sdk}}"
+
+          cat > ~/.config/godot/editor_settings-4.3.tres <<EOT
+          [gd_resource type="EditorSettings" format=3]
+
+          [resource]
+          export/android/java_sdk_path = "$JAVA"
+          export/android/android_sdk_path = "$SDK"
+          export/android/debug_keystore = "$HOME/.android/debug.keystore"
+          export/android/debug_keystore_user = "androiddebugkey"
+          export/android/debug_keystore_pass = "android"
+          EOT
+          sed -i 's/^          //' ~/.config/godot/editor_settings-4.3.tres
+
+      - name: Importar recursos
+        run: godot --headless --verbose --import || true
+
+      - name: Exportar APK
+        run: |
+          mkdir -v -p build/android
+          godot --headless --verbose --export-debug "Android" build/android/Cubolandia.apk
+          ls -la build/android
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Cubolandia-android-apk
+          path: build/android/Cubolandia.apk
+
+  desktop:
+    name: Windows e Linux
+    runs-on: ubuntu-22.04
+    container:
+      image: barichello/godot-ci:4.3
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar templates de exportação
+        run: |
+          mkdir -v -p ~/.local/share/godot/export_templates/
+          if [ -d /root/.local/share/godot/export_templates/${GODOT_VERSION}.stable ]; then
+            cp -r /root/.local/share/godot/export_templates/${GODOT_VERSION}.stable ~/.local/share/godot/export_templates/ || true
+          fi
+
+      - name: Importar recursos
+        run: godot --headless --verbose --import || true
+
+      - name: Exportar
+        run: |
+          mkdir -v -p build/windows build/linux
+          godot --headless --verbose --export-release "Windows" build/windows/Cubolandia.exe
+          godot --headless --verbose --export-release "Linux" build/linux/Cubolandia.x86_64
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Cubolandia-windows
+          path: build/windows
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Cubolandia-linux
+          path: build/linux

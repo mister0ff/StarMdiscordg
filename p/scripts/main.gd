@@ -76,8 +76,10 @@ func _ready() -> void:
 	elif "--join" in args:
 		join_server("127.0.0.1", PORT)
 	else:
-		start_panorama()
+		# menu primeiro: mesmo que o panorama 3D falhe no celular, a tela inicial aparece
 		menu.show_main()
+		await get_tree().process_frame
+		start_panorama()
 
 
 func _notification(what: int) -> void:

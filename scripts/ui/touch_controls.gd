@@ -96,9 +96,14 @@ func _scale_sel(delta: float) -> void:
 	queue_redraw()
 
 
+func _rect() -> Rect2:
+	return Util.safe_rect(get_viewport())
+
+
 func _center(id: String) -> Vector2:
 	var L: Dictionary = Settings.touch_layout[id]
-	return Vector2(L["x"] * size.x, L["y"] * size.y)
+	var r := _rect()
+	return r.position + Vector2(L["x"] * r.size.x, L["y"] * r.size.y)
 
 
 func _radius(id: String) -> float:
@@ -118,6 +123,11 @@ func _hit_btn(pos: Vector2) -> String:
 
 
 # ------------------------------------------------------------ entrada
+func _process(_d: float) -> void:
+	position = Vector2.ZERO
+	size = get_viewport().get_visible_rect().size
+
+
 func _input(event: InputEvent) -> void:
 	if edit_mode:
 		_edit_input(event)
@@ -165,7 +175,7 @@ func _touch_up(idx: int) -> void:
 func _touch_drag(idx: int, pos: Vector2, rel: Vector2) -> void:
 	if idx == _joy_idx:
 		_update_joy(pos)
-	elif idx == _look_idx:
+	elif idx == _look_idx and Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
 		main.local_player.apply_look(rel * 0.0045 * Settings.touch_look_sens)
 
 
@@ -212,6 +222,8 @@ func _press(id: String) -> void:
 				main.chat_ui.open()
 			"pause":
 				main.pause_game()
+			"camera":
+				pl.cycle_perspective()
 			"hotbar_prev":
 				pl.selected = (pl.selected + 8) % 9
 			"hotbar_next":
@@ -237,6 +249,26 @@ func _release_all() -> void:
 
 
 func _edit_input(event: InputEvent) -> void:
+	if event is InputEventScreenTouch:
+		if event.pressed:
+			if _panel.get_global_rect().has_point(event.position):
+				return
+			_drag_btn = _hit_btn(event.position)
+			if _drag_btn != "":
+				_sel_btn = _drag_btn
+		else:
+			_drag_btn = ""
+		queue_redraw()
+		return
+	if event is InputEventScreenDrag and _drag_btn != "":
+		var rr2 := _rect()
+		var L2: Dictionary = Settings.touch_layout[_drag_btn]
+		L2["x"] = clampf((event.position.x - rr2.position.x) / rr2.size.x, 0.03, 0.97)
+		L2["y"] = clampf((event.position.y - rr2.position.y) / rr2.size.y, 0.05, 0.95)
+		queue_redraw()
+		return
+	if event is InputEventMouseButton and event.device == InputEvent.DEVICE_ID_EMULATION:
+		return
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 		if event.pressed:
 			if _panel.get_global_rect().has_point(event.position):
@@ -249,8 +281,9 @@ func _edit_input(event: InputEvent) -> void:
 		queue_redraw()
 	elif event is InputEventMouseMotion and _drag_btn != "":
 		var L: Dictionary = Settings.touch_layout[_drag_btn]
-		L["x"] = clampf(event.position.x / size.x, 0.03, 0.97)
-		L["y"] = clampf(event.position.y / size.y, 0.05, 0.95)
+		var rr := _rect()
+		L["x"] = clampf((event.position.x - rr.position.x) / rr.size.x, 0.03, 0.97)
+		L["y"] = clampf((event.position.y - rr.position.y) / rr.size.y, 0.05, 0.95)
 		queue_redraw()
 
 

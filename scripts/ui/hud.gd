@@ -10,6 +10,11 @@ var _font: Font
 var _name_t := 0.0
 var _last_id := -2
 var _last_sel := -1
+var _title := ""
+var _subtitle := ""
+var _title_t := 0.0
+var _action := ""
+var _action_t := 0.0
 
 
 func _ready() -> void:
@@ -79,9 +84,32 @@ func hide_death() -> void:
 	_death.visible = false
 
 
+func show_title(t: String, sub: String) -> void:
+	if t != "":
+		_title = t
+	if sub != "":
+		_subtitle = sub
+	_title_t = 4.0
+
+
+func show_action(t: String) -> void:
+	_action = t
+	_action_t = 2.5
+
+
+func clear_title() -> void:
+	_title = ""
+	_subtitle = ""
+	_title_t = 0.0
+
+
 func _process(delta: float) -> void:
+	position = Vector2.ZERO
+	size = get_viewport().get_visible_rect().size
 	if not visible:
 		return
+	_title_t = maxf(0.0, _title_t - delta)
+	_action_t = maxf(0.0, _action_t - delta)
 	_hit_alpha = maxf(0.0, _hit_alpha - delta * 1.2)
 	_dmg.color.a = _hit_alpha
 	_name_t = maxf(0.0, _name_t - delta)
@@ -89,9 +117,11 @@ func _process(delta: float) -> void:
 
 
 func _metrics() -> Array:
-	var sl := clampf(minf(size.x / 11.0, 58.0), 36.0, 58.0)
-	var x0 := (size.x - sl * 9.0) * 0.5
-	var y0 := size.y - sl - 8.0
+	var r := Util.safe_rect(get_viewport())
+	var sc := Settings.hud_scale
+	var sl := clampf(minf(r.size.x / 12.0, 52.0 * sc), 30.0, 70.0)
+	var x0 := r.position.x + (r.size.x - sl * 9.0) * 0.5
+	var y0 := r.end.y - sl - 10.0
 	return [x0, y0, sl]
 
 
@@ -111,10 +141,12 @@ func _draw() -> void:
 	var x0: float = m[0]
 	var y0: float = m[1]
 	var sl: float = m[2]
-	if not p.ui_open:
+	if not p.ui_open and p.perspective != 2:
 		var c := size * 0.5
-		draw_rect(Rect2(c.x - 9, c.y - 1, 18, 2), Color(1, 1, 1, 0.8))
-		draw_rect(Rect2(c.x - 1, c.y - 9, 2, 18), Color(1, 1, 1, 0.8))
+		draw_rect(Rect2(c.x - 10, c.y - 2, 20, 4), Color(0, 0, 0, 0.55))
+		draw_rect(Rect2(c.x - 2, c.y - 10, 4, 20), Color(0, 0, 0, 0.55))
+		draw_rect(Rect2(c.x - 9, c.y - 1, 18, 2), Color(1, 1, 1, 0.95))
+		draw_rect(Rect2(c.x - 1, c.y - 9, 2, 18), Color(1, 1, 1, 0.95))
 	for i in 9:
 		var r := Rect2(x0 + i * sl, y0, sl, sl)
 		draw_rect(r, Color(0, 0, 0, 0.5))
@@ -142,28 +174,43 @@ func _draw() -> void:
 	if _name_t > 0.0 and sid != 0:
 		draw_string(_font, Vector2(0, y0 - 56), Blocks.name_of(sid), HORIZONTAL_ALIGNMENT_CENTER, size.x, 20, Color(1, 1, 1, clampf(_name_t, 0.0, 1.0)))
 	if not main.creative_mode:
-		var hy := y0 - 28.0
-		var hs := minf(sl * 0.34, 20.0)
+		var hy := y0 - 24.0
+		var hs := minf(sl * 0.36, 18.0)
+		
+		# Vida (Corações à esquerda)
 		for i in 10:
-			var rr := Rect2(x0 + i * (hs + 2), hy, hs, hs)
+			var rr := Rect2(x0 + i * (hs + 3), hy, hs, hs)
 			draw_rect(rr, Color(0.2, 0, 0, 0.8))
 			var hv := p.health / 2.0 - i
 			if hv >= 1.0:
 				draw_rect(rr.grow(-2), Color(0.9, 0.1, 0.12))
 			elif hv > 0.0:
 				draw_rect(Rect2(rr.position + Vector2(2, 2), Vector2((hs - 4) * 0.5, hs - 4)), Color(0.9, 0.1, 0.12))
+				
+		# Fome (À direita)
 		for i in 10:
-			var rr := Rect2(x0 + sl * 9.0 - (i + 1) * (hs + 2) + 2, hy, hs, hs)
+			var rr := Rect2(x0 + sl * 9.0 - (10 - i) * (hs + 3), hy, hs, hs)
 			draw_rect(rr, Color(0.2, 0.1, 0, 0.8))
 			var fv := p.hunger / 2.0 - i
 			if fv >= 1.0:
 				draw_rect(rr.grow(-2), Color(0.8, 0.5, 0.15))
 			elif fv > 0.0:
 				draw_rect(Rect2(rr.position + Vector2(hs - 2 - (hs - 4) * 0.5, 2), Vector2((hs - 4) * 0.5, hs - 4)), Color(0.8, 0.5, 0.15))
+				
 		if p.air < 9.9:
 			var nb := int(ceil(p.air))
 			for i in nb:
-				draw_circle(Vector2(x0 + sl * 9.0 - (i + 1) * (hs + 2) + hs * 0.5 + 2, hy - hs), hs * 0.4, Color(0.6, 0.85, 1.0, 0.9))
+				draw_circle(Vector2(x0 + sl * 9.0 - (i + 1) * (hs + 3) + hs * 0.5 + 2, hy - hs), hs * 0.4, Color(0.6, 0.85, 1.0, 0.9))
+				
+	var sr := Util.safe_rect(get_viewport())
+	if _title_t > 0.0:
+		var a := clampf(_title_t, 0.0, 1.0)
+		if _title != "":
+			draw_string(_font, Vector2(sr.position.x, size.y * 0.32), _title, HORIZONTAL_ALIGNMENT_CENTER, sr.size.x, 54, Color(1, 1, 1, a))
+		if _subtitle != "":
+			draw_string(_font, Vector2(sr.position.x, size.y * 0.32 + 40), _subtitle, HORIZONTAL_ALIGNMENT_CENTER, sr.size.x, 28, Color(0.9, 0.9, 0.7, a))
+	if _action_t > 0.0:
+		draw_string(_font, Vector2(sr.position.x, y0 - 78), _action, HORIZONTAL_ALIGNMENT_CENTER, sr.size.x, 22, Color(1, 1, 0.8, clampf(_action_t, 0.0, 1.0)))
 	var info := ""
 	if Settings.show_fps:
 		var gp := p.global_position
@@ -172,6 +219,6 @@ func _draw() -> void:
 	elif main.online:
 		info = "Online"
 	if info != "":
-		draw_string(_font, Vector2(12, 28), info, HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color(1, 1, 1, 0.9))
+		draw_string(_font, Vector2(sr.position.x + 12, sr.position.y + 28), info, HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color(1, 1, 1, 0.9))
 	if p.flying:
-		draw_string(_font, Vector2(12, 52), "Voando", HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(0.7, 0.9, 1, 0.9))
+		draw_string(_font, Vector2(sr.position.x + 12, sr.position.y + 52), "Voando", HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(0.7, 0.9, 1, 0.9))

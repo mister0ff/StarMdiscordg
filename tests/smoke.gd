@@ -15,7 +15,9 @@ func _ready() -> void:
 	B = get_node("/root/Blocks")
 	m = load("res://scenes/main.tscn").instantiate()
 	add_child(m)
-	m.start_world(false, 777, true, false)
+	var meta: Dictionary = WorldStore.new_meta("Teste", 777, "normal", false, WorldStore.DEFAULT_RULES)
+	meta["id"] = "teste_smoke"
+	m.start_world(meta)
 
 func _process(_dt: float) -> void:
 	f += 1
@@ -79,7 +81,7 @@ func _process(_dt: float) -> void:
 			m.world.explode(p.global_position + Vector3(4, -1, 0), 3.0)
 			check(true, "explosão sem erro")
 			m.save_game()
-			check(FileAccess.file_exists("user://save.dat"), "save gravado")
+			check(WorldStore.has_save("teste_smoke"), "save gravado")
 		480:
 			m.chat_ui.open()
 			m.send_chat("olá")
@@ -94,7 +96,7 @@ func _process(_dt: float) -> void:
 			check(m.menu.visible, "pausa abre")
 			m.resume_game()
 		500:
-			m.start_world(false, 0, true, true)
+			m.start_world(WorldStore.load_meta("teste_smoke"))
 		700:
 			check(m.local_player != null and m.world.seed_val == 777, "carregou save (seed %d)" % m.world.seed_val)
 			check(m.world.get_block(floori(m.local_player.global_position.x) + 2, 0, 0) != -1, "mundo carregado")

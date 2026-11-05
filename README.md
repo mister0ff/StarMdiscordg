@@ -42,3 +42,9 @@ Godot → *Editor → Gerenciar templates de exportação* (instalar) → *Edito
 
 ## Multijogador
 Quem hospeda: *Multijogador → Hospedar* (porta padrão 25565 UDP; libere no roteador/firewall ou use Radmin/ZeroTier/Tailscale). Os outros: *Entrar* com o IP do host.
+
+## Novidades
+- Menu inicial com panorama, avatar 3D, Jogar (Mundos 3x3 / Servidores / Realms), criar/editar mundo (regras, plano/normal), mods.
+- 1ª/2ª/3ª pessoa (F5 ou botão Cam), crosshair, tochas, partículas, sneak sem cair da borda, chat em tela cheia.
+- Botão voltar do Android abre a pausa. Mouse real (Android/PC) gira a câmera sem precisar clicar.
+- Sistema de mods .stc: veja mods.txt. Exemplo: mods_teste.stc.

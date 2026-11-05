@@ -1,9 +1,9 @@
 extends Node
 ## Controlador principal: fluxo do jogo, dia/noite, mobs, rede (ENet), PvP, chat, salvamento.
 
-const SAVE_PATH := "user://save.dat"
-const DAY_LEN := 600.0
+const DAY_LEN := 1800.0
 const PORT := 25565
+const PANORAMA_SEED := 20261105
 
 var world: World
 var local_player: Player
@@ -15,6 +15,14 @@ var inv_ui
 var touch
 var menu
 var chat_ui
+var commands: CommandRunner
+var meta: Dictionary = {}
+var rules: Dictionary = {}
+var pan_cam: Camera3D
+var panorama_on := false
+var _pan_t := 0.0
+var _pan_center := Vector3.ZERO
+var _sec_t := 0.0
 
 var playing := false
 var creative_mode := false
@@ -49,19 +57,75 @@ func _ready() -> void:
 	entities.name = "Entities"
 	add_child(entities)
 	_build_ui()
+	commands = CommandRunner.new(self)
+	ModManager.main = self
+	pan_cam = Camera3D.new()
+	pan_cam.far = 300.0
+	pan_cam.fov = 70.0
+	add_child(pan_cam)
 	multiplayer.peer_connected.connect(_on_peer_connected)
 	multiplayer.peer_disconnected.connect(_on_peer_disconnected)
 	multiplayer.connected_to_server.connect(_on_connected_ok)
 	multiplayer.connection_failed.connect(_on_connect_fail)
 	multiplayer.server_disconnected.connect(_on_server_gone)
-	menu.show_main(FileAccess.file_exists(SAVE_PATH))
 	var args := OS.get_cmdline_user_args()
-	if "--autostart" in args:
-		start_world("--creative" in args, 4242, true, false)
-	elif "--host" in args:
-		start_world(false, 4242, true, false, PORT)
+	if "--autostart" in args or "--host" in args:
+		var m := WorldStore.new_meta("Teste", 4242, "normal", "--creative" in args, WorldStore.DEFAULT_RULES)
+		m["id"] = "teste_tmp"
+		start_world(m, PORT if "--host" in args else 0)
 	elif "--join" in args:
 		join_server("127.0.0.1", PORT)
+	else:
+		start_panorama()
+		menu.show_main()
+
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_WM_GO_BACK_REQUEST:
+		on_back_pressed()
+
+
+## Botão "voltar" do Android (e equivalente)
+func on_back_pressed() -> void:
+	if menu != null and menu.visible:
+		menu.go_back()
+		return
+	if not playing or local_player == null or local_player.dead:
+		return
+	if touch.edit_mode:
+		return
+	if inv_ui.visible:
+		close_inventory()
+	elif chat_ui.is_open:
+		chat_ui.close()
+	else:
+		pause_game()
+
+
+func start_panorama() -> void:
+	_cleanup_world()
+	world.refresh_tables()
+	world.setup(PANORAMA_SEED, "normal")
+	_pan_center = world.find_spawn()
+	_pan_t = 0.0
+	panorama_on = true
+	time_of_day = 0.3
+	pan_cam.global_position = _pan_center + Vector3(0, 16, 0)
+	pan_cam.make_current()
+
+
+func _panorama_tick(delta: float) -> void:
+	_pan_t += delta
+	pan_cam.global_position = _pan_center + Vector3(0, 16, 0)
+	pan_cam.rotation = Vector3(-0.22, _pan_t * 0.05, 0)
+	world.set_centers([pan_cam.global_position], [clampi(Settings.render_distance, 3, 5)])
+	daylight = 1.0
+	world.set_daylight(1.0)
+	env.background_color = _sky_day
+	env.fog_light_color = _sky_day
+	env.fog_density = 2.3 / float(clampi(Settings.render_distance, 3, 5) * World.CS)
+	sun_pivot.global_position = pan_cam.global_position
+	sun_pivot.basis = Basis(Vector3(0, 0, 1), 0.3 * TAU - PI * 0.5)
 
 
 func _build_environment() -> void:
@@ -123,24 +187,29 @@ func _build_ui() -> void:
 
 
 # ================================================================ fluxo
-func start_world(creative: bool, seed_val: int, mobs_on: bool, load_save: bool, host_port := 0) -> void:
+func is_admin() -> bool:
+	if meta.get("kind", "world") == "server":
+		return ServerDefs.is_admin_nick(Settings.player_name)
+	return not online or is_host
+
+
+func start_world(m: Dictionary, host_port := 0) -> void:
 	_cleanup_world()
-	creative_mode = creative
-	mobs_enabled = mobs_on
-	var data := {}
+	panorama_on = false
+	meta = m
+	rules = WorldStore.rules_of(m)
+	creative_mode = bool(m.get("creative", false))
+	var wtype := str(m.get("type", "normal"))
+	ModManager.activate_world(meta)
+	WorldStore.save_meta(meta)
+	world.refresh_tables()
+	var data := WorldStore.read_save(meta["id"])
+	var seed_val := int(meta["seed"])
+	world.setup(seed_val, wtype)
+	time_of_day = 0.3
+	var load_save := not data.is_empty()
 	if load_save:
-		data = _read_save()
-		if data.is_empty():
-			load_save = false
-		else:
-			seed_val = data["seed"]
-			creative_mode = data["creative"]
-			mobs_enabled = data.get("mobs", true)
-			time_of_day = data.get("time", 0.3)
-	if seed_val == 0:
-		seed_val = randi() % 1000000 + 1
-	world.setup(seed_val)
-	if load_save:
+		time_of_day = data.get("time", 0.3)
 		world.import_edits(data["edits"])
 	spawn_point = world.find_spawn()
 	_create_player()
@@ -159,9 +228,11 @@ func start_world(creative: bool, seed_val: int, mobs_on: bool, load_save: bool, 
 			multiplayer.multiplayer_peer = peer
 			online = true
 			is_host = true
-			chat_ui.system("Servidor aberto na porta %d. Seu IP local/público + porta para amigos." % host_port)
+			chat_ui.system("Servidor aberto na porta %d." % host_port)
 	_begin_play()
-	if not load_save and mobs_enabled:
+	for e in ModManager.errors:
+		chat_ui.system("[mod] " + str(e))
+	if not load_save and rules.get("mob_spawning", true):
 		for i in 6:
 			_spawn_passive_near(spawn_point, 8.0, 30.0)
 
@@ -172,12 +243,22 @@ func join_server(ip: String, port: int) -> void:
 	var err := peer.create_client(ip, port)
 	if err != OK:
 		menu.toast("Não foi possível conectar (erro %d)" % err)
+		start_panorama()
 		return
 	multiplayer.multiplayer_peer = peer
 	online = true
 	is_host = false
 	_pending_welcome = true
+	start_panorama_keep_net()
 	menu.toast("Conectando a %s:%d ..." % [ip, port])
+
+
+func start_panorama_keep_net() -> void:
+	world.refresh_tables()
+	world.setup(PANORAMA_SEED, "normal")
+	_pan_center = world.find_spawn()
+	panorama_on = true
+	pan_cam.make_current()
 
 
 func _create_player() -> void:
@@ -203,6 +284,7 @@ func _starter_kit() -> void:
 
 func _begin_play() -> void:
 	playing = true
+	panorama_on = false
 	menu.hide_all()
 	hud.visible = true
 	local_player.set_ui_open(false)
@@ -211,13 +293,14 @@ func _begin_play() -> void:
 	if not is_host and online:
 		pass
 	chat_ui.system("Bem-vindo! Modo: %s. Digite /ajuda no chat." % ("Criativo" if creative_mode else "Sobrevivência"))
+	fire("player-spawn")
 
 
 func go_menu() -> void:
 	if playing and (not online or is_host):
 		save_game()
-	_cleanup_world()
-	menu.show_main(FileAccess.file_exists(SAVE_PATH))
+	start_panorama()
+	menu.show_main()
 
 
 func _cleanup_world() -> void:
@@ -242,8 +325,10 @@ func _cleanup_world() -> void:
 	touch.set_enabled(false)
 	inv_ui.close()
 	chat_ui.close()
-	if not Settings.use_touch():
-		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	chat_ui.clear()
+	get_tree().paused = false
+	ModManager.deactivate()
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 
 
 func _apply_view_distance() -> void:
@@ -254,32 +339,40 @@ func _apply_view_distance() -> void:
 
 # ================================================================ salvar / carregar
 func save_game() -> void:
-	if local_player == null:
+	if local_player == null or meta.is_empty():
 		return
 	var d := {
-		"seed": world.seed_val, "creative": creative_mode, "mobs": mobs_enabled,
-		"time": time_of_day, "edits": world.export_edits(),
+		"seed": world.seed_val, "time": time_of_day, "edits": world.export_edits(),
 		"player": local_player.serialize(), "spawn": spawn_point,
 	}
-	var f := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
-	if f != null:
-		f.store_var(d, false)
-		f.close()
+	WorldStore.write_save(meta["id"], d)
+	meta["rules"] = rules
+	WorldStore.save_meta(meta)
 
 
-func _read_save() -> Dictionary:
-	var f := FileAccess.open(SAVE_PATH, FileAccess.READ)
-	if f == null:
-		return {}
-	var d = f.get_var(false)
-	f.close()
-	if d is Dictionary and d.has("seed") and d.has("edits"):
-		return d
-	return {}
+func set_rule(nm: String, v: bool) -> void:
+	if not rules.has(nm):
+		chat_ui.system("Regra desconhecida: " + nm)
+		return
+	rules[nm] = v
+	meta["rules"] = rules
+	WorldStore.save_meta(meta)
+	chat_ui.system("Regra %s = %s" % [nm, "ligada" if v else "desligada"])
+
+
+func set_creative(v: bool) -> void:
+	creative_mode = v
+	meta["creative"] = v
+	local_player.creative = v
+	if not v:
+		local_player.flying = false
 
 
 # ================================================================ loop
 func _process(delta: float) -> void:
+	if panorama_on:
+		_panorama_tick(delta)
+		return
 	if not playing or local_player == null:
 		return
 	# estado inicial de carregamento do mundo
@@ -291,8 +384,15 @@ func _process(delta: float) -> void:
 			radii.append(3)
 	world.set_centers(pts, radii)
 	# tempo
-	time_of_day = fposmod(time_of_day + delta / DAY_LEN, 1.0)
+	if rules.get("always_day", false):
+		time_of_day = 0.3
+	else:
+		time_of_day = fposmod(time_of_day + delta / DAY_LEN, 1.0)
 	_update_sky()
+	_sec_t += delta
+	if _sec_t >= 1.0:
+		_sec_t = 0.0
+		fire("second")
 	if is_host or not online:
 		_host_tick(delta)
 	if is_host and online:
@@ -305,12 +405,7 @@ func _process(delta: float) -> void:
 		_autosave_t = 0.0
 		save_game()
 	if Input.is_action_just_pressed("ui_cancel") and not menu.visible and not touch.edit_mode and not local_player.dead:
-		if inv_ui.visible:
-			close_inventory()
-		elif chat_ui.is_open:
-			chat_ui.close()
-		else:
-			pause_game()
+		on_back_pressed()
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -390,9 +485,6 @@ func _update_sky() -> void:
 	world.set_daylight(daylight)
 	hud.set_underwater(underwater)
 	sun_pivot.global_position = local_player.cam.global_position
-	sun_pivot.rotation = Vector3(0, 0, time_of_day * TAU - PI * 0.5)
-	# o sol deve nascer em x+ e girar sobre o eixo Z
-	sun_pivot.rotation = Vector3(0, deg_to_rad(90), 0) + Vector3(0, 0, 0)
 	sun_pivot.basis = Basis(Vector3(0, 0, 1), time_of_day * TAU - PI * 0.5)
 
 
@@ -402,7 +494,7 @@ func is_day() -> bool:
 
 # ================================================================ mobs (host/solo)
 func _host_tick(delta: float) -> void:
-	if not mobs_enabled:
+	if not rules.get("mob_spawning", true) and mobs.is_empty():
 		return
 	_spawn_t += delta
 	if _spawn_t > 2.0:
@@ -437,7 +529,19 @@ func _all_player_positions() -> Array:
 	return out
 
 
+func all_mob_kinds() -> Array:
+	var out: Array = Mob.TYPES.keys()
+	out.append_array(Blocks.mob_defs.keys())
+	return out
+
+
+func spawn_mob(kind: String, pos: Vector3) -> Mob:
+	return _spawn_mob(kind, pos)
+
+
 func _try_spawn_mob() -> void:
+	if not rules.get("mob_spawning", true):
+		return
 	var pls := _all_player_positions()
 	if pls.is_empty():
 		return
@@ -449,12 +553,22 @@ func _try_spawn_mob() -> void:
 		else:
 			pass_n += 1
 	var base: Vector3 = pls[randi() % pls.size()]
-	if daylight < 0.3 and hostile_n < 12:
+	var night := daylight < 0.3
+	if night and hostile_n < 12 and rules.get("hostile_mobs", true):
 		var pos := _random_ground(base, 18.0, 36.0)
 		if pos != Vector3.INF:
-			var r := randf()
-			_spawn_mob("zombie" if r < 0.5 else ("skeleton" if r < 0.75 else "creeper"), pos)
-	elif pass_n < 12 and randf() < 0.4:
+			var pool: Array = ["zombie", "zombie", "skeleton", "creeper"]
+			for k in Blocks.mob_defs:
+				if Blocks.mob_defs[k]["spawn"] in ["noite", "night", "sempre", "always"] and Blocks.mob_defs[k]["hostile"]:
+					pool.append(k)
+			_spawn_mob(pool[randi() % pool.size()], pos)
+	elif not night and pass_n < 12 and randf() < 0.4:
+		for k in Blocks.mob_defs:
+			if Blocks.mob_defs[k]["spawn"] in ["dia", "day", "sempre", "always"] and not Blocks.mob_defs[k]["hostile"] and randf() < 0.3:
+				var p2 := _random_ground(base, 20.0, 40.0)
+				if p2 != Vector3.INF:
+					_spawn_mob(k, p2)
+				return
 		_spawn_passive_near(base, 20.0, 40.0)
 
 
@@ -516,6 +630,7 @@ func _remove_mob(id: int) -> void:
 func mob_died(m: Mob) -> void:
 	if not mobs.has(m.net_id):
 		return
+	fire("entity-death", {"entity": m.kind})
 	for d in m.drops():
 		spawn_drop_net(d[0], d[1], m.global_position + Vector3(0, 0.6, 0), Vector3(randf_range(-2, 2), 4, randf_range(-2, 2)), 0.4)
 	_remove_mob(m.net_id)
@@ -540,6 +655,7 @@ func damage_player(id: int, dmg: float, kb: Vector3) -> void:
 
 # ================================================================ ações do jogador local
 func player_break_block(pos: Vector3i, bid: int, harvest: bool) -> void:
+	Fx.block_break(entities, pos, bid)
 	set_block_net(pos.x, pos.y, pos.z, Blocks.AIR)
 	if harvest and not creative_mode:
 		var dr := Blocks.drops_for(bid, local_player.held_id())
@@ -565,7 +681,7 @@ func player_attack(ent: Node, dmg: float, kb: Vector3) -> void:
 		else:
 			r_hit_mob.rpc_id(1, m.net_id, dmg, kb)
 	elif ent is RemotePlayer:
-		if not creative_mode or true:
+		if rules.get("pvp", true):
 			r_hit_player.rpc_id(ent.peer_id, dmg, kb)
 
 
@@ -622,7 +738,8 @@ func player_fell_into_void() -> void:
 
 
 func _on_player_died() -> void:
-	if not creative_mode:
+	fire("player-death")
+	if not creative_mode and not rules.get("keep_inventory", false):
 		for i in Inventory.SIZE:
 			var s = local_player.inv.slots[i]
 			if s != null:
@@ -639,82 +756,70 @@ func respawn() -> void:
 	local_player.respawn(spawn_point)
 	local_player.set_ui_open(false)
 	touch.set_enabled(Settings.use_touch())
+	fire("player-spawn")
+
+
+# ================================================================ scripts / eventos
+func script_ctx(extra: Dictionary = {}) -> Dictionary:
+	var c := {"player": Settings.player_name, "online": online, "day": daylight > 0.5, "time": time_of_day,
+		"world": str(meta.get("name", "")), "item": "air", "block": "air", "entity": ""}
+	var p := local_player
+	if p != null:
+		c["health"] = p.health
+		c["hunger"] = p.hunger
+		c["sneaking"] = Input.is_action_pressed("sneak")
+		c["sprinting"] = p.velocity.length() > 5.0
+		c["flying"] = p.flying
+		c["creative"] = creative_mode
+		c["on_ground"] = p.is_on_floor()
+		c["x"] = floori(p.global_position.x)
+		c["y"] = floori(p.global_position.y)
+		c["z"] = floori(p.global_position.z)
+		var h := p.held_id()
+		c["item"] = Blocks.key_of(h) if h != 0 else "air"
+	c.merge(extra, true)
+	return c
+
+
+## Dispara um evento de script. Retorna o contexto (com "__cancel" se cancelado e "damage" possivelmente alterado).
+func fire(event: String, extra: Dictionary = {}) -> Dictionary:
+	if not ModManager.has_event(event):
+		return extra
+	var ctx := script_ctx(extra)
+	ModManager.run_event(event, ctx)
+	return ctx
 
 
 # ================================================================ chat e comandos
+func broadcast_system(text: String) -> void:
+	chat_ui.system(text)
+	if online:
+		r_sys.rpc(text)
+
+
+func send_chat_raw(text: String) -> void:
+	broadcast_system(text)
+
+
 func send_chat(text: String) -> void:
 	text = text.strip_edges()
 	if text.is_empty():
 		return
 	if text.begins_with("/"):
-		_command(text)
+		if not rules.get("commands", true):
+			chat_ui.system("Comandos estão desativados nas regras deste mundo/servidor.")
+			return
+		if not is_admin():
+			chat_ui.system("Só o admin pode usar comandos aqui.")
+			return
+		commands.run(text, {})
+		return
+	var ctx := fire("before-chat", {"message": text})
+	if ctx.get("__cancel", false):
 		return
 	chat_ui.message(Settings.player_name, text)
 	if online:
 		r_chat.rpc(Settings.player_name, text)
-
-
-func _command(text: String) -> void:
-	var p := text.substr(1).split(" ", false)
-	if p.is_empty():
-		return
-	match p[0]:
-		"ajuda", "help":
-			chat_ui.system("/gm c|s  /time dia|noite|<0-1>  /give <id> [qtd]  /tp x y z  /spawn  /heal  /kill  /seed  /mob <tipo>  /itens")
-		"gm", "gamemode":
-			if p.size() > 1:
-				creative_mode = p[1].begins_with("c") or p[1] == "1"
-				local_player.creative = creative_mode
-				if not creative_mode:
-					local_player.flying = false
-				chat_ui.system("Modo: %s" % ("Criativo" if creative_mode else "Sobrevivência"))
-		"time":
-			if p.size() > 1 and (not online or is_host):
-				match p[1]:
-					"dia", "day":
-						time_of_day = 0.3
-					"noite", "night":
-						time_of_day = 0.78
-					_:
-						time_of_day = fposmod(float(p[1]), 1.0)
-				if online:
-					r_time.rpc(time_of_day)
-				chat_ui.system("Hora ajustada.")
-			else:
-				chat_ui.system("Só o anfitrião muda a hora.")
-		"give":
-			if p.size() > 1:
-				var id := int(p[1])
-				var n := int(p[2]) if p.size() > 2 else 1
-				if Blocks.defs.has(id):
-					local_player.inv.add(id, n)
-					chat_ui.system("Recebeu %s x%d" % [Blocks.name_of(id), n])
-				else:
-					chat_ui.system("ID inválido. Use /itens")
-		"itens":
-			var s := ""
-			for id in Blocks.defs:
-				s += "%d=%s, " % [id, Blocks.name_of(id)]
-			chat_ui.system(s.substr(0, 700))
-		"tp":
-			if p.size() >= 4:
-				local_player.teleport(Vector3(float(p[1]), float(p[2]), float(p[3])))
-		"spawn":
-			local_player.teleport(spawn_point)
-		"heal":
-			local_player.health = 20.0
-			local_player.hunger = 20.0
-		"kill":
-			local_player.creative = false
-			local_player.take_damage(9999.0, Vector3.ZERO, 0, true)
-			local_player.creative = creative_mode
-		"seed":
-			chat_ui.system("Semente: %d" % world.seed_val)
-		"mob":
-			if p.size() > 1 and Mob.TYPES.has(p[1]) and (not online or is_host):
-				_spawn_mob(p[1], local_player.global_position + (-local_player.cam.global_transform.basis.z) * 3.0 + Vector3(0, 1, 0))
-		_:
-			chat_ui.system("Comando desconhecido. /ajuda")
 
 
 # ================================================================ rede
@@ -726,7 +831,7 @@ func net_send_state(pos: Vector3, yaw: float, pitch: float, held: int, swing: bo
 
 func _on_peer_connected(id: int) -> void:
 	if is_host and playing:
-		r_welcome.rpc_id(id, world.seed_val, creative_mode, mobs_enabled, time_of_day, world.export_edits(), spawn_point)
+		r_welcome.rpc_id(id, world.seed_val, creative_mode, true, time_of_day, world.export_edits(), spawn_point, world.world_type, rules, meta.get("idmap", {}), ModManager.collect_buffers(meta))
 
 
 func _on_peer_disconnected(id: int) -> void:
@@ -741,14 +846,14 @@ func _on_connected_ok() -> void:
 
 
 func _on_connect_fail() -> void:
-	_cleanup_world()
-	menu.show_main(FileAccess.file_exists(SAVE_PATH))
+	start_panorama()
+	menu.show_main()
 	menu.toast("Falha na conexão.")
 
 
 func _on_server_gone() -> void:
-	_cleanup_world()
-	menu.show_main(FileAccess.file_exists(SAVE_PATH))
+	start_panorama()
+	menu.show_main()
 	menu.toast("Desconectado do servidor.")
 
 
@@ -766,19 +871,22 @@ func _add_remote(id: int, nm: String) -> void:
 
 
 @rpc("authority", "reliable")
-func r_welcome(seed_val: int, creative: bool, mobs_on: bool, tod: float, edits: Dictionary, spawn: Vector3) -> void:
+func r_welcome(seed_val: int, creative: bool, _mobs_on: bool, tod: float, edits: Dictionary, spawn: Vector3, wtype: String, rules_d: Dictionary, idmap: Dictionary, mod_bufs: Array) -> void:
 	if not _pending_welcome:
 		return
 	_pending_welcome = false
+	panorama_on = false
 	var keep_peer := multiplayer.multiplayer_peer
 	creative_mode = creative
-	mobs_enabled = mobs_on
+	rules = rules_d
+	meta = {"id": "remote", "name": "Online", "kind": "remote", "idmap": idmap}
 	time_of_day = tod
-	# limpar sem fechar a conexão
 	if local_player != null:
 		local_player.queue_free()
 	world.clear_world()
-	world.setup(seed_val)
+	ModManager.activate_buffers(mod_bufs, idmap)
+	world.refresh_tables()
+	world.setup(seed_val, wtype)
 	world.import_edits(edits)
 	spawn_point = spawn
 	_create_player()
@@ -812,7 +920,15 @@ func r_state(pos: Vector3, yaw: float, pitch: float, held: int, swing: bool, sne
 
 @rpc("any_peer", "reliable")
 func r_block(x: int, y: int, z: int, id: int) -> void:
+	var old := world.get_block(x, y, z)
+	if old != Blocks.AIR and id == Blocks.AIR:
+		Fx.block_break(entities, Vector3i(x, y, z), old)
 	world.set_block(x, y, z, id)
+
+
+@rpc("any_peer", "reliable")
+func r_sys(text: String) -> void:
+	chat_ui.system(text)
 
 
 @rpc("any_peer", "reliable")
@@ -845,9 +961,9 @@ func r_hit_mob(id: int, dmg: float, kb: Vector3) -> void:
 
 @rpc("any_peer", "reliable")
 func r_hit_player(dmg: float, kb: Vector3) -> void:
-	if local_player == null or creative_mode:
+	if local_player == null or creative_mode or not rules.get("pvp", true):
 		return
-	local_player.take_damage(dmg, kb)
+	local_player.take_damage(dmg, kb, 0, false, "player")
 
 
 @rpc("any_peer", "reliable")
@@ -880,7 +996,9 @@ func r_arrow(pos: Vector3, vel: Vector3) -> void:
 
 @rpc("any_peer", "reliable", "call_local")
 func r_explode(pos: Vector3, radius: float) -> void:
-	world.explode(pos, radius)
+	if rules.get("mob_griefing", true):
+		world.explode(pos, radius)
+	Fx.burst(entities, pos, Color(0.9, 0.9, 0.9), 24, 6.0, 0.25, 0.9)
 	if local_player != null and not local_player.dead:
 		var to := local_player.global_position + Vector3(0, 0.9, 0) - pos
 		var d := to.length()

@@ -4,6 +4,7 @@ extends Node3D
 
 const CS := 16
 const CH := 64
+const FLAT_H := 24
 const SEA := 20
 const DAY_SHADER := """
 shader_type spatial;
@@ -14,8 +15,9 @@ uniform vec3 tint = vec3(1.0);
 void fragment() {
 	vec4 t = texture(atlas, UV);
 	if (t.a < 0.5) discard;
-	float l = mix(0.14, 1.0, daylight);
-	ALBEDO = t.rgb * COLOR.rgb * l * mix(vec3(0.75, 0.8, 1.0), tint, daylight);
+	float l = max(mix(0.14, 1.0, daylight), COLOR.a);
+	vec3 warm = mix(vec3(1.0, 0.9, 0.75), vec3(1.0), daylight);
+	ALBEDO = t.rgb * COLOR.rgb * l * mix(vec3(0.75, 0.8, 1.0) * warm, tint, daylight);
 }
 """
 const WATER_SHADER := """
@@ -62,6 +64,9 @@ class Chunk:
 
 
 var seed_val := 0
+var world_type := "normal"
+var emitters: Dictionary = {}
+var _known := PackedByteArray()
 var chunks: Dictionary = {}
 var edits: Dictionary = {} # Vector2i -> { idx:int -> id:int }
 var centers: Array = [] # Array[Vector3] (posições dos jogadores)
@@ -82,32 +87,45 @@ var daylight := 1.0
 
 
 func _ready() -> void:
+	var sh := Shader.new()
+	sh.code = DAY_SHADER
+	_mat_solid = ShaderMaterial.new()
+	_mat_solid.shader = sh
+	var sw := Shader.new()
+	sw.code = WATER_SHADER
+	_mat_water = ShaderMaterial.new()
+	_mat_water.shader = sw
+	refresh_tables()
+
+
+## Recalcula tabelas de blocos (chame depois de ativar/desativar mods).
+func refresh_tables() -> void:
 	_opaque.resize(256)
 	_solid.resize(256)
-	for id in range(1, Blocks.MAX_BLOCK + 1):
+	_known.resize(256)
+	_opaque.fill(0)
+	_solid.fill(0)
+	_known.fill(0)
+	_face_uv.resize(256 * 6)
+	for id in Blocks.defs:
+		if id > 255 or not Blocks.defs[id]["block"]:
+			continue
+		_known[id] = 1
 		_opaque[id] = 1 if Blocks.is_opaque(id) else 0
 		_solid[id] = 1 if Blocks.is_solid(id) else 0
-	_face_uv.resize(256 * 6)
-	for id in range(1, Blocks.MAX_BLOCK + 1):
 		var tiles: Array = Blocks.defs[id]["tiles"]
 		for f in 6:
 			var tn: String = tiles[0] if f == 2 else (tiles[2] if f == 3 else tiles[1])
 			_face_uv[id * 6 + f] = Blocks.tile_uv(tn)
 	_uv_size = Vector2(1.0 / Blocks.ATLAS_COLS, 1.0 / Blocks._atlas_rows())
-	var sh := Shader.new()
-	sh.code = DAY_SHADER
-	_mat_solid = ShaderMaterial.new()
-	_mat_solid.shader = sh
-	_mat_solid.set_shader_parameter("atlas", Blocks.atlas_tex)
-	var sw := Shader.new()
-	sw.code = WATER_SHADER
-	_mat_water = ShaderMaterial.new()
-	_mat_water.shader = sw
-	_mat_water.set_shader_parameter("atlas", Blocks.atlas_tex)
+	if _mat_solid != null:
+		_mat_solid.set_shader_parameter("atlas", Blocks.atlas_tex)
+		_mat_water.set_shader_parameter("atlas", Blocks.atlas_tex)
 
 
-func setup(new_seed: int) -> void:
+func setup(new_seed: int, wtype := "normal") -> void:
 	seed_val = new_seed
+	world_type = wtype
 	_noise_h.seed = new_seed
 	_noise_h.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
 	_noise_h.frequency = 0.007
@@ -131,6 +149,7 @@ func clear_world() -> void:
 	_gen_queue.clear()
 	_dirty.clear()
 	edits.clear()
+	emitters.clear()
 
 
 func set_daylight(v: float) -> void:
@@ -152,6 +171,8 @@ func _rand01(x: int, y: int, z: int) -> float:
 
 
 func height_at(wx: int, wz: int) -> int:
+	if world_type == "flat":
+		return FLAT_H
 	var n: float = _noise_h.get_noise_2d(wx, wz)
 	var m: float = _noise_b.get_noise_2d(wx, wz)
 	var h: float = SEA + 4.0 + n * 13.0 + _noise_d.get_noise_2d(wx, wz) * 2.5
@@ -161,7 +182,7 @@ func height_at(wx: int, wz: int) -> int:
 
 
 func is_desert(wx: int, wz: int) -> bool:
-	return _noise_b.get_noise_2d(wx, wz) < -0.3
+	return world_type == "normal" and _noise_b.get_noise_2d(wx, wz) < -0.3
 
 
 func _surface_block(wx: int, wz: int, h: int) -> int:
@@ -203,7 +224,9 @@ func _gen_chunk(pos: Vector2i) -> void:
 					id = sub
 				else:
 					id = Blocks.STONE
-					if y > 2 and y < h - 4 and _noise_c.get_noise_3d(wx, y * 1.4, wz) > 0.52:
+					if world_type == "flat":
+						pass
+					elif y > 2 and y < h - 4 and _noise_c.get_noise_3d(wx, y * 1.4, wz) > 0.52:
 						id = Blocks.AIR
 					else:
 						var r := _rand01(wx, y, wz)
@@ -224,7 +247,7 @@ func _gen_chunk(pos: Vector2i) -> void:
 		for tx in range(-2, CS + 2):
 			var wx: int = ox + tx
 			var wz: int = oz + tz
-			if _rand01(wx, 77, wz) > 0.011:
+			if world_type == "flat" or _rand01(wx, 77, wz) > 0.011:
 				continue
 			var h := height_at(wx, wz)
 			if _surface_block(wx, wz, h) != Blocks.GRASS or h <= SEA + 1:
@@ -276,7 +299,8 @@ func get_block(wx: int, y: int, wz: int) -> int:
 	var c: Chunk = chunks.get(Vector2i(floori(wx / float(CS)), floori(wz / float(CS))))
 	if c == null:
 		return Blocks.AIR
-	return c.blocks[_idx(posmod(wx, CS), y, posmod(wz, CS))]
+	var gid: int = c.blocks[_idx(posmod(wx, CS), y, posmod(wz, CS))]
+	return gid if _known[gid] == 1 or gid == 0 else Blocks.AIR
 
 
 func is_loaded(wx: int, wz: int) -> bool:
@@ -294,6 +318,7 @@ func set_block(wx: int, y: int, wz: int, id: int) -> bool:
 	if not edits.has(cp):
 		edits[cp] = {}
 	edits[cp][i] = id
+	_track_emitter(Vector3i(wx, y, wz), id, cp)
 	var c: Chunk = chunks.get(cp)
 	if c == null:
 		return true
@@ -312,6 +337,20 @@ func set_block(wx: int, y: int, wz: int, id: int) -> bool:
 	return true
 
 
+func _track_emitter(pos: Vector3i, id: int, cp: Vector2i) -> void:
+	var lv := Blocks.light_of(id)
+	var had := emitters.has(pos)
+	if lv > 0:
+		emitters[pos] = lv
+	elif had:
+		emitters.erase(pos)
+	if lv > 0 or had:
+		for dx in range(-1, 2):
+			for dz in range(-1, 2):
+				if dx != 0 or dz != 0:
+					_mark(cp + Vector2i(dx, dz))
+
+
 func _mark(p: Vector2i) -> void:
 	if chunks.has(p):
 		_dirty[p] = true
@@ -326,6 +365,8 @@ func surface_y(wx: int, wz: int) -> int:
 
 
 func find_spawn() -> Vector3:
+	if world_type == "flat":
+		return Vector3(0.5, FLAT_H + 2.0, 0.5)
 	for r in range(0, 200, 4):
 		for a in range(0, 360, 45):
 			var wx := int(cos(deg_to_rad(a)) * r)
@@ -485,6 +526,12 @@ func _build_mesh(c: Chunk) -> void:
 	var wcols := PackedColorArray()
 	var widx := PackedInt32Array()
 	var col_faces := PackedVector3Array()
+	var em: Array = []
+	for ep in emitters:
+		var lvl: int = emitters[ep]
+		var rad := lvl * 0.6
+		if ep.x > ox - rad and ep.x < ox + CS + rad and ep.z > oz - rad and ep.z < oz + CS + rad:
+			em.append([Vector3(ep.x + 0.5, ep.y + 0.5, ep.z + 0.5), rad, minf(1.0, lvl / 14.0)])
 	var e := 0.0006
 	var su := _uv_size.x - 2.0 * e
 	var sv := _uv_size.y - 2.0 * e
@@ -492,7 +539,10 @@ func _build_mesh(c: Chunk) -> void:
 		for z in CS:
 			for x in CS:
 				var id: int = bl[x + z * CS + y * CS * CS]
-				if id == 0:
+				if id == 0 or _known[id] == 0:
+					continue
+				if id == Blocks.TORCH:
+					_add_torch(x, y, z, verts, uvs, cols, idx)
 					continue
 				var is_water := id == Blocks.WATER
 				var lower_top := false
@@ -525,7 +575,10 @@ func _build_mesh(c: Chunk) -> void:
 					if vis:
 						var base_uv: Vector2 = _face_uv[id * 6 + f]
 						var shade: float = FACE_SHADE[f]
-						var color := Color(shade, shade, shade, 1.0)
+						var bl := 0.0
+						if not em.is_empty() and not is_water:
+							bl = _block_light(Vector3(ox + x + 0.5 + n.x * 0.5, y + 0.5 + n.y * 0.5, oz + z + 0.5 + n.z * 0.5), em)
+						var color := Color(shade, shade, shade, bl)
 						var fu: Array = FACE_UV[f]
 						if is_water:
 							var b := wverts.size()
@@ -586,6 +639,57 @@ func _build_mesh(c: Chunk) -> void:
 	c.meshed = true
 
 
+func _block_light(p: Vector3, em: Array) -> float:
+	var best := 0.0
+	for e in em:
+		var d := p.distance_to(e[0])
+		if d < e[1]:
+			var v := pow(1.0 - d / e[1], 1.5) * e[2]
+			if v > best:
+				best = v
+	return best
+
+
+func _add_torch(x: int, y: int, z: int, verts: PackedVector3Array, uvs: PackedVector2Array, cols: PackedColorArray, idx: PackedInt32Array) -> void:
+	var base_uv: Vector2 = _face_uv[Blocks.TORCH * 6 + 0]
+	for f in 6:
+		var fv: Array = FACE_V[f]
+		var fu: Array = FACE_UV[f]
+		var b := verts.size()
+		for k in 4:
+			var v: Vector3 = fv[k]
+			verts.append(Vector3(x + 0.4375 + v.x * 0.125, y + v.y * 0.625, z + 0.4375 + v.z * 0.125))
+			var lu: Vector2 = fu[k]
+			var px := 7.0 + lu.x * 2.0
+			var py := 6.0 + lu.y * 10.0
+			if f == 2:
+				py = 4.0 + lu.y * 2.0
+			uvs.append(base_uv + Vector2(px / 16.0 * _uv_size.x, py / 16.0 * _uv_size.y))
+			cols.append(Color(1, 1, 1, 1))
+		idx.append_array([b, b + 1, b + 2, b, b + 2, b + 3])
+
+
+## Miniatura vista de cima (para os cards de mundo).
+func preview_image(sz: int, span: int) -> Image:
+	var img := Image.create(sz, sz, false, Image.FORMAT_RGB8)
+	for py in sz:
+		for px in sz:
+			var wx := int((px - sz / 2) * span / float(sz))
+			var wz := int((py - sz / 2) * span / float(sz))
+			var h := height_at(wx, wz)
+			var col := Color(0.30, 0.58, 0.2).lightened(clampf((h - SEA) * 0.01, 0.0, 0.25))
+			if world_type == "flat":
+				col = Color(0.32, 0.6, 0.22) if (px / 8 + py / 8) % 2 == 0 else Color(0.3, 0.56, 0.21)
+			elif h <= SEA:
+				col = Color(0.15, 0.35, 0.75).darkened(clampf((SEA - h) * 0.03, 0.0, 0.5))
+			elif h <= SEA + 1 or is_desert(wx, wz):
+				col = Color(0.86, 0.8, 0.55)
+			elif h >= 44:
+				col = Color(0.95, 0.97, 1.0)
+			img.set_pixel(px, py, col)
+	return img
+
+
 # ------------------------------------------------------------ salvar / carregar
 func export_edits() -> Dictionary:
 	return edits.duplicate(true)
@@ -597,6 +701,8 @@ func import_edits(d: Dictionary) -> void:
 			edits[cp] = {}
 		for i in d[cp]:
 			edits[cp][i] = d[cp][i]
+			if Blocks.light_of(d[cp][i]) > 0:
+				emitters[Vector3i(cp.x * CS + int(i) % CS, int(i) / (CS * CS), cp.y * CS + (int(i) / CS) % CS)] = Blocks.light_of(d[cp][i])
 		var c: Chunk = chunks.get(cp)
 		if c != null:
 			for i in d[cp]:

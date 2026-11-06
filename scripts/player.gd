@@ -9,8 +9,6 @@ signal station_requested
 const GRAVITY := 26.0
 const JUMP_V := 8.4
 const EYE := 1.62
-const THIRD_DIST := 4.2
-const EAT_TIME := 1.2
 
 var game: Node
 var world: World
@@ -34,11 +32,10 @@ var crack: MeshInstance3D
 var target: Dictionary = {}
 var hit_w := 0.3
 var hit_h := 1.8
-var perspective := 0 # 0 = 1ª pessoa, 1 = 3ª (atrás), 2 = 2ª (de frente)
-var model: PlayerModel
-var effects: Dictionary = {}
-var real_attack := false
-var real_place := false
+var arm: MeshInstance3D
+var _m_attack := false
+var _m_place := false
+var _mine_fx := 0.0
 
 var _break_pos := Vector3i(-99999, 0, 0)
 var _break_t := 0.0
@@ -59,9 +56,6 @@ var _hand_id := -1
 var _sync_t := 0.0
 var _sprinting := false
 var _in_water := false
-var _eat_t := 0.0
-var _eat_fx := 0.0
-var _was_sneak := false
 
 
 func _ready() -> void:
@@ -93,11 +87,13 @@ func _ready() -> void:
 	hand.position = Vector3(0.42, -0.32, -0.75)
 	hand.rotation_degrees = Vector3(0, -20, 8)
 	cam.add_child(hand)
-	model = PlayerModel.new()
-	model.build(Settings.avatar_skin, Settings.avatar_shirt, Settings.avatar_pants, Settings.avatar_hair)
-	add_child(model)
-	model.visible = false
-	perspective = Settings.perspective
+	arm = Util.make_shaded_box(Vector3(0.17, 0.17, 0.62), Settings.skin["skin"])
+	arm.position = Vector3(0.5, -0.46, -0.62)
+	arm.rotation_degrees = Vector3(12, 14, 0)
+	var am_mat := arm.material_override as StandardMaterial3D
+	am_mat.no_depth_test = true
+	am_mat.render_priority = 9
+	cam.add_child(arm)
 	outline = MeshInstance3D.new()
 	outline.top_level = true
 	var am := ArrayMesh.new()
@@ -133,56 +129,25 @@ func apply_look(d: Vector2) -> void:
 	head.rotation.x = pitch
 
 
-func look_origin() -> Vector3:
-	return head.global_position
-
-
-func look_dir() -> Vector3:
-	return -head.global_transform.basis.z
-
-
-func _pressed(a: String) -> bool:
-	return Input.is_action_pressed(a) or (a == "attack" and real_attack) or (a == "place" and real_place)
-
-
-func _ensure_capture() -> void:
-	if not ui_open and Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
-		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
-
-
-func cycle_perspective() -> void:
-	perspective = (perspective + 1) % 3
-	Settings.perspective = perspective
-	if game != null and game.hud != null:
-		game.hud.show_action(["1ª pessoa", "3ª pessoa", "2ª pessoa (de frente)"][perspective])
-
-
 func _unhandled_input(event: InputEvent) -> void:
 	if ui_open or dead:
 		return
-	if event is InputEventMouseMotion:
-		var real: bool = event.device != InputEvent.DEVICE_ID_EMULATION
-		if real or Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
-			if real:
-				Settings.mouse_detected = true
-				_ensure_capture()
-			apply_look(event.relative * 0.0022 * Settings.look_sens)
-		return
-	if event is InputEventMouseButton and event.device != InputEvent.DEVICE_ID_EMULATION:
-		if event.pressed:
-			Settings.mouse_detected = true
-			_ensure_capture()
-		if Settings.use_touch():
-			if event.button_index == MOUSE_BUTTON_LEFT:
-				real_attack = event.pressed
-			elif event.button_index == MOUSE_BUTTON_RIGHT:
-				real_place = event.pressed
+	if event is InputEventMouseMotion and event.device != InputEvent.DEVICE_ID_EMULATION:
+		if not Settings.mouse_seen:
+			Settings.mouse_seen = true
+			Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+		apply_look(event.relative * 0.0022 * Settings.look_sens)
+	elif event is InputEventMouseButton and event.device != InputEvent.DEVICE_ID_EMULATION:
+		var ka: Dictionary = Settings.keys["attack"]
+		var kp: Dictionary = Settings.keys["place"]
+		if ka["t"] == "m" and int(ka["c"]) == event.button_index:
+			_m_attack = event.pressed
+		if kp["t"] == "m" and int(kp["c"]) == event.button_index:
+			_m_place = event.pressed
 	if event.is_action_pressed("hotbar_next"):
 		selected = (selected + 1) % 9
 	elif event.is_action_pressed("hotbar_prev"):
 		selected = (selected + 8) % 9
-	elif event.is_action_pressed("perspective"):
-		cycle_perspective()
 	elif event.is_action_pressed("fly") and creative:
 		flying = not flying
 	elif event.is_action_pressed("drop"):
@@ -200,8 +165,8 @@ func _drop_selected(whole: bool) -> void:
 	var n: int = s[1] if whole else 1
 	var id: int = s[0]
 	inv.take_from(selected, n)
-	var d := look_dir()
-	game.spawn_drop_net(id, n, look_origin() + d * 0.5, d * 5.0 + Vector3.UP * 2.0, 1.5)
+	var d := -cam.global_transform.basis.z
+	game.spawn_drop_net(id, n, cam.global_position + d * 0.5, d * 5.0 + Vector3.UP * 2.0, 1.5)
 
 
 func held_id() -> int:
@@ -210,12 +175,12 @@ func held_id() -> int:
 
 func set_ui_open(v: bool) -> void:
 	ui_open = v
-	if not Settings.use_touch() or Settings.mouse_detected:
+	if v:
+		_m_attack = false
+		_m_place = false
+	if not Settings.use_touch() or Settings.mouse_seen:
 		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE if v else Input.MOUSE_MODE_CAPTURED
 	if v:
-		real_attack = false
-		real_place = false
-		_eat_t = 0.0
 		_reset_break()
 
 
@@ -229,7 +194,6 @@ func _physics_process(delta: float) -> void:
 		else:
 			return
 	_inv_time = maxf(0.0, _inv_time - delta)
-	_tick_effects(delta)
 	_kb_time = maxf(0.0, _kb_time - delta)
 	var pos := global_position
 	var feet_id := world.get_block(floori(pos.x), floori(pos.y + 0.2), floori(pos.z))
@@ -244,9 +208,6 @@ func _physics_process(delta: float) -> void:
 		iv = Input.get_vector("left", "right", "forward", "back")
 		jump = Input.is_action_pressed("jump")
 		sneak = Input.is_action_pressed("sneak")
-	if sneak and not _was_sneak:
-		game.fire("player-sneak")
-	_was_sneak = sneak
 	if jump and not _was_jump and creative:
 		var now := Time.get_ticks_msec() / 1000.0
 		if now - _last_jump_tap < 0.3:
@@ -263,10 +224,6 @@ func _physics_process(delta: float) -> void:
 	elif (Input.is_action_pressed("sprint") or (Settings.use_touch() and iv.length() > 0.96)) and iv.y < -0.1 and hunger > 6.0:
 		speed = 5.9
 		_sprinting = true
-	if effects.has("speed"):
-		speed *= 1.35
-	if effects.has("slowness"):
-		speed *= 0.6
 	if _in_water:
 		speed *= 0.6
 	if flying:
@@ -278,6 +235,11 @@ func _physics_process(delta: float) -> void:
 		accel = 2.5
 	velocity.x = move_toward(velocity.x, target_v.x, accel * delta)
 	velocity.z = move_toward(velocity.z, target_v.z, accel * delta)
+	if sneak and is_on_floor() and not flying:
+		if not _has_ground(pos + Vector3(velocity.x * delta, 0, 0)):
+			velocity.x = 0.0
+		if not _has_ground(pos + Vector3(0, 0, velocity.z * delta)):
+			velocity.z = 0.0
 
 	if flying:
 		var vy := 0.0
@@ -296,36 +258,29 @@ func _physics_process(delta: float) -> void:
 	else:
 		velocity.y -= GRAVITY * delta
 		if is_on_floor() and jump:
-			velocity.y = JUMP_V * (1.3 if effects.has("jump") else 1.0)
-			game.fire("player-jump")
+			velocity.y = JUMP_V
 		elif is_on_floor() and Settings.use_touch() and iv.length() > 0.3 and is_on_wall():
 			_auto_jump(dir)
 
-	if sneak and not flying and is_on_floor():
-		_sneak_edge_clamp(delta)
 	# queda
 	if not is_on_floor() and not _in_water and not flying:
 		_fall_peak = maxf(_fall_peak, pos.y)
 	move_and_slide()
 	if is_on_floor() and _fall_peak > -999.0:
 		var fall := _fall_peak - global_position.y
-		if fall > 3.4 and not creative and not _in_water and game.rules.get("fall_damage", true):
-			take_damage(floorf(fall - 3.0), Vector3.ZERO, 0, true, "fall")
+		if fall > 3.4 and not creative and not _in_water:
+			take_damage(floorf(fall - 3.0), Vector3.ZERO, 0, true)
 		_fall_peak = -1000.0
 	if _in_water or flying:
 		_fall_peak = -1000.0
 
 	head.position.y = EYE - (0.18 if sneak and not flying else 0.0)
-	model.animate(delta, Vector2(velocity.x, velocity.z).length(), _swing > 0.0, sneak and not flying)
-	model.set_pitch(pitch)
 	if global_position.y < -30.0:
 		game.player_fell_into_void()
 
 	# fome / vida / ar
 	if not creative:
 		_survival_tick(delta, head_water)
-		if effects.has("regeneration"):
-			health = minf(20.0, health + delta * 1.2)
 	else:
 		health = 20.0
 		hunger = 20.0
@@ -336,6 +291,15 @@ func _physics_process(delta: float) -> void:
 	if _sync_t > 0.066:
 		_sync_t = 0.0
 		game.net_send_state(global_position, yaw, pitch, held_id(), _swing > 0.0, sneak)
+
+
+func _has_ground(p: Vector3) -> bool:
+	var fy := floori(p.y - 0.05)
+	for sx in [-0.3, 0.3]:
+		for sz in [-0.3, 0.3]:
+			if Blocks.is_solid(world.get_block(floori(p.x + sx), fy, floori(p.z + sz))):
+				return true
+	return false
 
 
 func _auto_jump(dir: Vector3) -> void:
@@ -352,35 +316,7 @@ func _auto_jump(dir: Vector3) -> void:
 		velocity.y = JUMP_V
 
 
-func _tick_effects(delta: float) -> void:
-	for k in effects.keys():
-		effects[k] -= delta
-		if effects[k] <= 0.0:
-			effects.erase(k)
-
-
-func _supported_at(x: float, z: float) -> bool:
-	var y := floori(global_position.y - 0.1)
-	for ox in [-0.3, 0.3]:
-		for oz in [-0.3, 0.3]:
-			if Blocks.is_solid(world.get_block(floori(x + ox), y, floori(z + oz))):
-				return true
-	return false
-
-
-func _sneak_edge_clamp(delta: float) -> void:
-	var p := global_position
-	if not _supported_at(p.x, p.z):
-		return
-	if not _supported_at(p.x + velocity.x * delta, p.z):
-		velocity.x = 0.0
-	if not _supported_at(p.x + velocity.x * delta, p.z + velocity.z * delta):
-		velocity.z = 0.0
-
-
 func _survival_tick(delta: float, head_water: bool) -> void:
-	if not game.rules.get("hunger", true):
-		hunger = 20.0
 	var drain := 0.0
 	if _sprinting:
 		drain = 0.04
@@ -399,37 +335,19 @@ func _survival_tick(delta: float, head_water: bool) -> void:
 		_starve_t += delta
 		if _starve_t >= 4.0:
 			_starve_t = 0.0
-			take_damage(1.0, Vector3.ZERO, 0, true, "starve")
+			take_damage(1.0, Vector3.ZERO, 0, true)
 	if head_water:
 		air = maxf(0.0, air - delta)
 		if air <= 0.0:
 			_drown_t += delta
 			if _drown_t >= 1.0:
 				_drown_t = 0.0
-				take_damage(2.0, Vector3.ZERO, 0, true, "drown")
+				take_damage(2.0, Vector3.ZERO, 0, true)
 	else:
 		air = minf(10.0, air + delta * 4.0)
 
 
 # ---------------------------------------------------------------- interação
-func _update_camera() -> void:
-	if perspective == 0:
-		cam.position = Vector3.ZERO
-		cam.rotation = Vector3.ZERO
-	else:
-		var back := perspective == 1
-		var local_dir := Vector3(0, 0, 1) if back else Vector3(0, 0, -1)
-		var wdir := head.global_transform.basis * local_dir
-		var hit := world.raycast(head.global_position, wdir, THIRD_DIST + 0.3)
-		var dist := THIRD_DIST
-		if not hit.is_empty():
-			dist = maxf(0.3, float(hit["t"]) - 0.3)
-		cam.position = local_dir * dist
-		cam.rotation = Vector3(0, 0 if back else PI, 0)
-	model.visible = perspective != 0
-	hand.visible = perspective == 0 and held_id() != 0
-
-
 func _process(delta: float) -> void:
 	if dead:
 		return
@@ -439,9 +357,8 @@ func _process(delta: float) -> void:
 	_mine_cd -= delta
 	_swing = maxf(0.0, _swing - delta)
 	_update_hand()
-	_update_camera()
-	var origin := look_origin()
-	var dir := look_dir()
+	var origin := cam.global_position
+	var dir := -cam.global_transform.basis.z
 	var reach := 6.0 if creative else 4.8
 	target = world.raycast(origin, dir, reach) if not frozen else {}
 	if target.is_empty() or ui_open:
@@ -454,7 +371,7 @@ func _process(delta: float) -> void:
 		crack.visible = false
 		return
 	var held := held_id()
-	if _pressed("attack"):
+	if Input.is_action_pressed("attack") or _m_attack:
 		var bt: float = target["t"] if not target.is_empty() else reach
 		var ent: Node = _entity_target(origin, dir, minf(bt, reach))
 		if ent != null:
@@ -470,34 +387,9 @@ func _process(delta: float) -> void:
 			_swing = 0.12
 	else:
 		_reset_break()
-	var placing := _pressed("place")
-	if placing and Blocks.food.has(held) and not creative:
-		_eat_tick(delta, held)
-	else:
-		_eat_t = 0.0
-		if placing and _place_cd <= 0.0:
-			_place_cd = 0.3
-			_do_place(held)
-
-
-func _eat_tick(delta: float, held: int) -> void:
-	if hunger >= 20.0:
-		return
-	_eat_t += delta
-	_swing = 0.1
-	_eat_fx -= delta
-	if _eat_fx <= 0.0:
-		_eat_fx = 0.2
-		Fx.eat(game.entities, look_origin() + look_dir() * 0.6 + Vector3(0, -0.25, 0), held)
-	if _eat_t >= EAT_TIME:
-		_eat_t = 0.0
-		var ctx: Dictionary = game.fire("before-use", {"item": Blocks.key_of(held)})
-		if ctx.get("__cancel", false):
-			return
-		hunger = minf(20.0, hunger + Blocks.food[held])
-		inv.take_from(selected, 1)
-		game.fire("player-eat", {"item": Blocks.key_of(held)})
-		game.fire("after-use", {"item": Blocks.key_of(held)})
+	if (Input.is_action_pressed("place") or _m_place) and _place_cd <= 0.0:
+		_place_cd = 0.3
+		_do_place(held)
 
 
 func _reset_break() -> void:
@@ -521,8 +413,12 @@ func _mine(delta: float, held: int) -> void:
 	if creative:
 		if _mine_cd <= 0.0:
 			_mine_cd = 0.2
-			_finish_break(bp, bid, false, held)
+			game.player_break_block(bp, bid, false)
 		return
+	_mine_fx -= delta
+	if _mine_fx <= 0.0:
+		_mine_fx = 0.22
+		Fx.block_hit(bp, target["normal"], bid)
 	_break_t += delta
 	crack.visible = true
 	crack.global_position = Vector3(bp) + Vector3.ONE * 0.5
@@ -530,17 +426,9 @@ func _mine(delta: float, held: int) -> void:
 	if _break_t >= need:
 		var harvest := Blocks.can_harvest(bid, held)
 		_reset_break()
-		_finish_break(bp, bid, harvest, held)
-		if Blocks.is_tool(held):
+		game.player_break_block(bp, bid, harvest)
+		if Blocks.has_dur(held):
 			inv.use_durability(selected, 1)
-
-
-func _finish_break(bp: Vector3i, bid: int, harvest: bool, held: int) -> void:
-	var ctx: Dictionary = game.fire("before-break", {"block": Blocks.key_of(bid), "bx": bp.x, "by": bp.y, "bz": bp.z})
-	if ctx.get("__cancel", false):
-		return
-	game.player_break_block(bp, bid, harvest)
-	game.fire("after-break", {"block": Blocks.key_of(bid), "bx": bp.x, "by": bp.y, "bz": bp.z})
 
 
 func _entity_target(origin: Vector3, dir: Vector3, max_t: float) -> Node:
@@ -560,72 +448,56 @@ func _entity_target(origin: Vector3, dir: Vector3, max_t: float) -> Node:
 
 func _do_attack(ent: Node, dir: Vector3, held: int) -> void:
 	var dmg := Blocks.attack_damage(held)
-	var crit := not is_on_floor() and velocity.y < -0.5 and not flying
+	var crit := not is_on_floor() and not flying and not _in_water
 	if crit:
 		dmg *= 1.5
-	var ekey := ""
-	if ent is Mob:
-		ekey = ent.kind
-	elif ent is RemotePlayer:
-		ekey = "player"
-	var ctx: Dictionary = game.fire("before-hit", {"entity": ekey, "damage": dmg, "item": Blocks.key_of(held) if held != 0 else "air", "crit": crit})
-	if ctx.get("__cancel", false):
-		return
-	dmg = StcExpr._num(ctx.get("damage", dmg))
 	var flat := Vector3(dir.x, 0, dir.z).normalized()
 	var kb := flat * (9.0 if _sprinting else 6.5)
 	game.player_attack(ent, dmg, kb)
-	var hit_pos: Vector3 = ent.global_position + Vector3(0, ent.hit_h * 0.6, 0)
-	Fx.hurt(game.entities, hit_pos)
+	var tp: Vector3 = ent.global_position + Vector3(0, float(ent.hit_h) * 0.6, 0)
+	Fx.hurt(tp)
 	if crit:
-		Fx.crit(game.entities, hit_pos)
-	if ent is RemotePlayer:
-		ent.flash()
-	if Blocks.is_tool(held) and not creative:
+		Fx.crit(tp + Vector3(0, 0.3, 0))
+	if Blocks.has_dur(held) and not creative:
 		inv.use_durability(selected, 1)
-	game.fire("after-hit", {"entity": ekey, "damage": dmg, "item": Blocks.key_of(held) if held != 0 else "air", "crit": crit})
 
 
 func _do_place(held: int) -> void:
 	_swing = 0.15
-	var ictx: Dictionary = game.fire("before-use", {"item": Blocks.key_of(held) if held != 0 else "air"})
-	if ictx.get("__cancel", false):
-		return
-	if not target.is_empty():
-		var tid: int = target["id"]
-		var tpos: Vector3i = target["pos"]
-		if (tid == Blocks.TABLE or tid == Blocks.FURNACE) and not Input.is_action_pressed("sneak"):
+	if held != 0 and Blocks.food.has(held):
+		if hunger < 20.0 and not creative:
+			hunger = minf(20.0, hunger + Blocks.food[held])
+			Fx.eat(cam.global_position + (-cam.global_transform.basis.z) * 0.5 + Vector3(0, -0.2, 0), held)
+			inv.take_from(selected, 1)
 			_place_cd = 0.5
-			station_requested.emit()
-			return
-		var ic: Dictionary = game.fire("interact", {"block": Blocks.key_of(tid), "bx": tpos.x, "by": tpos.y, "bz": tpos.z})
-		if ic.get("__cancel", false):
-			return
-	if held != 0:
-		game.fire("after-use", {"item": Blocks.key_of(held)})
+		return
 	if target.is_empty():
+		return
+	var tid: int = target["id"]
+	if (tid == Blocks.TABLE or tid == Blocks.FURNACE) and not Input.is_action_pressed("sneak"):
+		_place_cd = 0.5
+		station_requested.emit()
 		return
 	if held == 0 or not Blocks.is_block(held):
 		return
 	var np: Vector3i = target["pos"] + target["normal"]
+	if held == Blocks.TORCH and not Blocks.is_solid(world.get_block(np.x, np.y - 1, np.z)):
+		return
 	var cur := world.get_block(np.x, np.y, np.z)
 	if cur != Blocks.AIR and cur != Blocks.WATER:
 		return
 	if np.y < 0 or np.y >= World.CH:
 		return
+	# não colocar dentro do próprio corpo
 	var p := global_position
 	var bmin := Vector3(np)
 	var bmax := Vector3(np) + Vector3.ONE
 	if p.x + 0.3 > bmin.x and p.x - 0.3 < bmax.x and p.z + 0.3 > bmin.z and p.z - 0.3 < bmax.z \
 		and p.y + 1.8 > bmin.y and p.y < bmax.y and Blocks.is_solid(held):
 		return
-	var pc: Dictionary = game.fire("before-place", {"block": Blocks.key_of(held), "bx": np.x, "by": np.y, "bz": np.z})
-	if pc.get("__cancel", false):
-		return
 	game.player_place_block(np, held)
 	if not creative:
 		inv.take_from(selected, 1)
-	game.fire("after-place", {"block": Blocks.key_of(held), "bx": np.x, "by": np.y, "bz": np.z})
 
 
 func _update_hand() -> void:
@@ -634,7 +506,6 @@ func _update_hand() -> void:
 		_hand_id = id
 		hand.texture = Blocks.icon(id) if id != 0 else null
 		hand.visible = id != 0
-		model.set_held(hand.texture)
 		if id != 0:
 			hand.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
 	var s := sin((0.25 - _swing) * 12.0) if _swing > 0.0 else 0.0
@@ -643,23 +514,14 @@ func _update_hand() -> void:
 
 
 # ---------------------------------------------------------------- vida
-func take_damage(amount: float, kb: Vector3 = Vector3.ZERO, _from := 0, ignore_inv := false, source := "generic") -> void:
+func take_damage(amount: float, kb: Vector3 = Vector3.ZERO, _from := 0, ignore_inv := false) -> void:
 	if dead or amount <= 0.0:
 		return
 	if creative and not is_equal_approx(amount, 9999.0):
 		return
 	if _inv_time > 0.0 and not ignore_inv:
 		return
-	if effects.has("resistance"):
-		amount *= 0.6
-	var dctx: Dictionary = game.fire("before-damage", {"damage": amount, "source": source})
-	if dctx.get("__cancel", false):
-		return
-	amount = StcExpr._num(dctx.get("damage", amount))
-	if amount <= 0.0:
-		return
 	_inv_time = 0.5
-	model.flash()
 	health -= amount
 	if kb != Vector3.ZERO:
 		velocity.x = kb.x
@@ -667,7 +529,6 @@ func take_damage(amount: float, kb: Vector3 = Vector3.ZERO, _from := 0, ignore_i
 		velocity.y = maxf(velocity.y, 5.0)
 		_kb_time = 0.3
 	damaged.emit()
-	game.fire("after-damage", {"damage": amount, "source": source})
 	if health <= 0.0:
 		health = 0.0
 		dead = true

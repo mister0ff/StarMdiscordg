@@ -164,8 +164,8 @@ func _on_drop() -> void:
 	var n := player.inv.get_count(_sel)
 	player.inv.take_from(_sel, n)
 	if not creative:
-		var d := player.look_dir()
-		main.spawn_drop_net(id, n, player.look_origin() + d * 0.6, d * 4.0 + Vector3.UP * 2.0, 1.5)
+		var d := -player.cam.global_transform.basis.z
+		main.spawn_drop_net(id, n, player.cam.global_position + d * 0.6, d * 4.0 + Vector3.UP * 2.0, 1.5)
 	_sel = -1
 	_refresh()
 
@@ -204,11 +204,6 @@ func _build_craft() -> void:
 		var st: String = ["", " [Mesa]", " [Fornalha]"][r["st"]]
 		b.text = "%s x%d  ←  %s%s" % [Blocks.name_of(r["out"]), r["n"], ", ".join(ing), st]
 		b.disabled = not player.inv.can_craft(r, near_table, near_furnace)
-		if r.has("grid") and not r["grid"].is_empty():
-			var tip := ""
-			for row in r["grid"]:
-				tip += " | ".join(PackedStringArray(row)) + "\n"
-			b.tooltip_text = tip
 		b.pressed.connect(func(): player.inv.craft(r, near_table, near_furnace))
 		_craft_box.add_child(b)
 

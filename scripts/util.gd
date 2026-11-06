@@ -39,64 +39,67 @@ static func make_box(size: Vector3, color: Color, offset := Vector3.ZERO) -> Mes
 	return m
 
 
-## Retângulo seguro da tela (notch / barra de navegação) em coordenadas do canvas.
-static func safe_rect(vp: Viewport) -> Rect2:
-	var vr := vp.get_visible_rect()
-	var full := Rect2(Vector2.ZERO, vr.size)
-	if not (OS.has_feature("mobile") or OS.has_feature("android") or OS.has_feature("ios")):
-		return full
-	var win := DisplayServer.window_get_size()
-	var sa := DisplayServer.get_display_safe_area()
-	if win.x <= 0 or win.y <= 0 or sa.size.x <= 0 or sa.size.y <= 0:
-		return full
-	var sc := Vector2(vr.size.x / float(win.x), vr.size.y / float(win.y))
-	var r := Rect2(Vector2(sa.position) * sc, Vector2(sa.size) * sc)
-	r = r.intersection(full)
-	if r.size.x < vr.size.x * 0.5 or r.size.y < vr.size.y * 0.5:
-		return full
+## Caixa com sombreamento por face (cores de vértice). Centrada na origem.
+static func make_shaded_box(size: Vector3, color: Color, offset := Vector3.ZERO) -> MeshInstance3D:
+	var verts := PackedVector3Array()
+	var cols := PackedColorArray()
+	var idx := PackedInt32Array()
+	for f in 6:
+		var fv: Array = World.FACE_V[f]
+		var shade: float = World.FACE_SHADE[f]
+		var b := verts.size()
+		for k in 4:
+			var v: Vector3 = fv[k]
+			verts.append((v - Vector3(0.5, 0.5, 0.5)) * size)
+			cols.append(Color(color.r * shade, color.g * shade, color.b * shade, color.a))
+		idx.append_array([b, b + 1, b + 2, b, b + 2, b + 3])
+	var arr := []
+	arr.resize(Mesh.ARRAY_MAX)
+	arr[Mesh.ARRAY_VERTEX] = verts
+	arr[Mesh.ARRAY_COLOR] = cols
+	arr[Mesh.ARRAY_INDEX] = idx
+	var am := ArrayMesh.new()
+	am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
+	var m := MeshInstance3D.new()
+	m.mesh = am
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.vertex_color_use_as_albedo = true
+	m.material_override = mat
+	m.position = offset
+	return m
+
+
+static func is_mobile() -> bool:
+	return OS.has_feature("mobile") or OS.has_feature("android") or OS.has_feature("ios")
+
+
+## Margens seguras (esq, topo, dir, baixo) em unidades do viewport (só celular).
+static func safe_insets(vp: Viewport) -> Vector4:
+	if not is_mobile():
+		return Vector4.ZERO
+	var win := Vector2(DisplayServer.window_get_size())
+	if win.x <= 0.0 or win.y <= 0.0:
+		return Vector4.ZERO
+	var sa: Rect2i = DisplayServer.get_display_safe_area()
+	if sa.size.x <= 0 or sa.size.y <= 0:
+		return Vector4.ZERO
+	var scr := Vector2(DisplayServer.screen_get_size())
+	var vs := vp.get_visible_rect().size
+	var k := Vector2(vs.x / win.x, vs.y / win.y)
+	var l := clampf(float(sa.position.x), 0.0, win.x * 0.2) * k.x
+	var t := clampf(float(sa.position.y), 0.0, win.y * 0.2) * k.y
+	var r := clampf(scr.x - float(sa.end.x), 0.0, win.x * 0.2) * k.x
+	var b := clampf(scr.y - float(sa.end.y), 0.0, win.y * 0.2) * k.y
+	return Vector4(l, t, r, b)
+
+
+## Área útil da HUD (dentro das margens seguras e da margem escolhida pelo jogador).
+static func hud_rect(vp: Viewport) -> Rect2:
+	var vs := vp.get_visible_rect().size
+	var ins := safe_insets(vp)
+	var bottom := ins.w + Settings.hud_margin
+	var r := Rect2(ins.x, ins.y, vs.x - ins.x - ins.z, vs.y - ins.y - bottom)
+	if r.size.x < 200.0 or r.size.y < 150.0:
+		return Rect2(Vector2.ZERO, vs)
 	return r
-
-
-static func image_from_bytes(b: PackedByteArray) -> Image:
-	if b.size() < 8:
-		return null
-	var img := Image.new()
-	var err := ERR_FILE_UNRECOGNIZED
-	if b[0] == 0x89 and b[1] == 0x50:
-		err = img.load_png_from_buffer(b)
-	elif b[0] == 0xFF and b[1] == 0xD8:
-		err = img.load_jpg_from_buffer(b)
-	elif b[0] == 0x52 and b[1] == 0x49:
-		err = img.load_webp_from_buffer(b)
-	if err != OK:
-		return null
-	return img
-
-
-static func strip_accents(s: String) -> String:
-	var from := "áàâãäéèêëíìîïóòôõöúùûüçñ"
-	var to := "aaaaaeeeeiiiiooooouuuucn"
-	var out := ""
-	for ch in s.to_lower():
-		var i := from.find(ch)
-		out += to[i] if i >= 0 else ch
-	return out
-
-
-static func slug(s: String) -> String:
-	var t := strip_accents(s.strip_edges())
-	var out := ""
-	for ch in t:
-		if (ch >= "a" and ch <= "z") or (ch >= "0" and ch <= "9"):
-			out += ch
-		elif out != "" and not out.ends_with("_"):
-			out += "_"
-	return out.trim_suffix("_")
-
-
-static func fmt_num(v: Variant) -> String:
-	if v is float and is_equal_approx(v, roundf(v)):
-		return str(int(v))
-	if v is float:
-		return "%.2f" % v
-	return str(v)

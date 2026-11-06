@@ -5,15 +5,14 @@ config_version=5
 
 config/name="Cubolandia"
 run/main_scene="res://scenes/main.tscn"
+config/quit_on_go_back=false
 config/features=PackedStringArray("4.3", "GL Compatibility")
 config/icon="res://icon.svg"
-config/quit_on_go_back=false
 
 [autoload]
 
 Settings="*res://scripts/settings.gd"
 Blocks="*res://scripts/blocks.gd"
-ModManager="*res://scripts/stc/mod_manager.gd"
 
 [display]
 
@@ -29,8 +28,6 @@ pointing/emulate_mouse_from_touch=true
 pointing/emulate_touch_from_mouse=false
 
 [rendering]
-
-environment/defaults/default_clear_color=Color(0.52, 0.74, 0.96, 1)
 
 renderer/rendering_method="gl_compatibility"
 renderer/rendering_method.mobile="gl_compatibility"

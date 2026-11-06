@@ -6,11 +6,13 @@ signal changed
 
 const SIZE := 36
 var slots: Array = []
+var n_slots := SIZE
 
 
-func _init() -> void:
-	slots.resize(SIZE)
-	for i in SIZE:
+func _init(n: int = SIZE) -> void:
+	n_slots = n
+	slots.resize(n_slots)
+	for i in n_slots:
 		slots[i] = null
 
 
@@ -26,14 +28,14 @@ func add(id: int, count: int, dur := -1) -> int:
 	## devolve o que sobrou (não coube)
 	var maxs := Blocks.stack_of(id)
 	if maxs > 1:
-		for i in SIZE:
+		for i in n_slots:
 			if count <= 0:
 				break
 			if slots[i] != null and slots[i][0] == id and slots[i][1] < maxs:
 				var t := mini(count, maxs - slots[i][1])
 				slots[i][1] += t
 				count -= t
-	for i in SIZE:
+	for i in n_slots:
 		if count <= 0:
 			break
 		if slots[i] == null:
@@ -58,7 +60,7 @@ func count_of(id: int) -> int:
 func remove_id(id: int, count: int) -> bool:
 	if count_of(id) < count:
 		return false
-	for i in SIZE:
+	for i in n_slots:
 		if count <= 0:
 			break
 		if slots[i] != null and slots[i][0] == id:
@@ -82,7 +84,7 @@ func take_from(i: int, n := 1) -> void:
 
 func use_durability(i: int, amount := 1) -> bool:
 	## devolve true se a ferramenta quebrou
-	if slots[i] == null or not Blocks.is_tool(slots[i][0]):
+	if slots[i] == null or not Blocks.has_dur(slots[i][0]):
 		return false
 	slots[i][2] -= amount
 	if slots[i][2] <= 0:
@@ -117,7 +119,7 @@ func move_stack(a: int, b: int) -> void:
 
 
 func clear() -> void:
-	for i in SIZE:
+	for i in n_slots:
 		slots[i] = null
 	changed.emit()
 
@@ -130,9 +132,9 @@ func to_array() -> Array:
 
 
 func from_array(a: Array) -> void:
-	for i in SIZE:
+	for i in n_slots:
 		slots[i] = null
-	for i in mini(a.size(), SIZE):
+	for i in mini(a.size(), n_slots):
 		slots[i] = a[i].duplicate() if a[i] != null else null
 	changed.emit()
 
@@ -156,3 +158,26 @@ func craft(r: Dictionary, near_table: bool, near_furnace: bool) -> bool:
 		remove_id(id, r["in"][id])
 	add(r["out"], r["n"])
 	return true
+
+
+## Move a pilha a[i] para b[j] (junta se for o mesmo item, senão troca). Funciona entre inventários.
+static func transfer(a: Inventory, i: int, b: Inventory, j: int) -> void:
+	if a.slots[i] == null:
+		return
+	if a == b:
+		a.move_stack(i, j)
+		return
+	var sa: Array = a.slots[i]
+	var sb = b.slots[j]
+	if sb != null and sb[0] == sa[0] and Blocks.stack_of(sa[0]) > 1:
+		var maxs: int = Blocks.stack_of(sa[0])
+		var t: int = mini(int(sa[1]), maxs - int(sb[1]))
+		sb[1] += t
+		sa[1] -= t
+		if sa[1] <= 0:
+			a.slots[i] = null
+	else:
+		a.slots[i] = sb
+		b.slots[j] = sa
+	a.changed.emit()
+	b.changed.emit()

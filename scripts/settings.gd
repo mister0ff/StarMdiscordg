@@ -12,7 +12,7 @@ const ACTIONS := [
 	["place", "Colocar / usar"], ["inventory", "Inventário"],
 	["chat", "Chat"], ["fly", "Alternar voo (criativo)"],
 	["hotbar_prev", "Item anterior"], ["hotbar_next", "Próximo item"],
-	["drop", "Largar item"], ["perspective", "Trocar perspectiva (1ª/2ª/3ª)"],
+	["drop", "Largar item"],
 ]
 
 const DEFAULT_KEYS := {
@@ -24,7 +24,7 @@ const DEFAULT_KEYS := {
 	"chat": {"t": "k", "c": KEY_T}, "fly": {"t": "k", "c": KEY_F},
 	"hotbar_prev": {"t": "m", "c": MOUSE_BUTTON_WHEEL_UP},
 	"hotbar_next": {"t": "m", "c": MOUSE_BUTTON_WHEEL_DOWN},
-	"drop": {"t": "k", "c": KEY_Q}, "perspective": {"t": "k", "c": KEY_F5},
+	"drop": {"t": "k", "c": KEY_Q},
 }
 
 # Botões de toque: posição do centro (fração da tela) e escala
@@ -40,13 +40,17 @@ const DEFAULT_TOUCH := {
 	"pause": {"x": 0.95, "y": 0.08, "s": 0.7},
 	"hotbar_prev": {"x": 0.36, "y": 0.10, "s": 0.7},
 	"hotbar_next": {"x": 0.44, "y": 0.10, "s": 0.7},
-	"camera": {"x": 0.52, "y": 0.10, "s": 0.7},
 }
 
 const TOUCH_LABELS := {
 	"joystick": "Direcional", "jump": "Pular", "attack": "Atacar", "place": "Colocar",
 	"sneak": "Agachar", "fly": "Voar", "inventory": "Inv", "chat": "Chat",
-	"pause": "II", "hotbar_prev": "<", "hotbar_next": ">", "camera": "Cam",
+	"pause": "II", "hotbar_prev": "<", "hotbar_next": ">",
+}
+
+const SKIN_DEFAULT := {
+	"skin": Color(0.85, 0.65, 0.5), "hair": Color(0.25, 0.15, 0.08),
+	"shirt": Color(0.2, 0.55, 0.9), "pants": Color(0.2, 0.25, 0.55),
 }
 
 var keys: Dictionary = {}
@@ -63,12 +67,10 @@ var player_name := "Jogador"
 var last_ip := "127.0.0.1"
 var volume := 1.0
 var hud_scale := 1.0
-var perspective := 0
-var mouse_detected := false
-var avatar_skin := Color(0.85, 0.65, 0.5)
-var avatar_shirt := Color(0.25, 0.45, 0.85)
-var avatar_pants := Color(0.2, 0.25, 0.55)
-var avatar_hair := Color(0.25, 0.15, 0.08)
+var hud_margin := 0.0
+var show_crosshair := true
+var mouse_seen := false
+var skin: Dictionary = SKIN_DEFAULT.duplicate()
 
 
 func _ready() -> void:
@@ -167,11 +169,9 @@ func save_settings() -> void:
 	c.set_value("s", "last_ip", last_ip)
 	c.set_value("s", "volume", volume)
 	c.set_value("s", "hud_scale", hud_scale)
-	c.set_value("s", "perspective", perspective)
-	c.set_value("s", "avatar_skin", avatar_skin)
-	c.set_value("s", "avatar_shirt", avatar_shirt)
-	c.set_value("s", "avatar_pants", avatar_pants)
-	c.set_value("s", "avatar_hair", avatar_hair)
+	c.set_value("s", "hud_margin", hud_margin)
+	c.set_value("s", "show_crosshair", show_crosshair)
+	c.set_value("s", "skin", skin)
 	c.save(SAVE_PATH)
 
 
@@ -200,9 +200,11 @@ func load_settings() -> void:
 	player_name = c.get_value("s", "player_name", player_name)
 	last_ip = c.get_value("s", "last_ip", last_ip)
 	volume = c.get_value("s", "volume", volume)
-	hud_scale = c.get_value("s", "hud_scale", hud_scale)
-	perspective = c.get_value("s", "perspective", perspective)
-	avatar_skin = c.get_value("s", "avatar_skin", avatar_skin)
-	avatar_shirt = c.get_value("s", "avatar_shirt", avatar_shirt)
-	avatar_pants = c.get_value("s", "avatar_pants", avatar_pants)
-	avatar_hair = c.get_value("s", "avatar_hair", avatar_hair)
+	hud_scale = clampf(float(c.get_value("s", "hud_scale", hud_scale)), 0.6, 1.8)
+	hud_margin = clampf(float(c.get_value("s", "hud_margin", hud_margin)), 0.0, 240.0)
+	show_crosshair = bool(c.get_value("s", "show_crosshair", show_crosshair))
+	var sk = c.get_value("s", "skin", {})
+	if sk is Dictionary:
+		for k in sk:
+			if skin.has(k) and sk[k] is Color:
+				skin[k] = sk[k]

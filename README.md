@@ -43,8 +43,15 @@ Godot → *Editor → Gerenciar templates de exportação* (instalar) → *Edito
 ## Multijogador
 Quem hospeda: *Multijogador → Hospedar* (porta padrão 25565 UDP; libere no roteador/firewall ou use Radmin/ZeroTier/Tailscale). Os outros: *Entrar* com o IP do host.
 
-## Novidades
-- Menu inicial com panorama, avatar 3D, Jogar (Mundos 3x3 / Servidores / Realms), criar/editar mundo (regras, plano/normal), mods.
-- 1ª/2ª/3ª pessoa (F5 ou botão Cam), crosshair, tochas, partículas, sneak sem cair da borda, chat em tela cheia.
-- Botão voltar do Android abre a pausa. Mouse real (Android/PC) gira a câmera sem precisar clicar.
-- Sistema de mods .stc: veja mods.txt. Exemplo: mods_teste.stc.
+## Novidades desta versão
+- Tochas (carvão + graveto) que iluminam ao redor, com modelo próprio; mundo **Plano** ou **Normal** ao criar o mundo
+- Opções ao criar o mundo: Sempre dia, Spawn de mobs, Comandos (comandos só funcionam se ativados)
+- Dia/noite com 20 minutos (antes 10)
+- Braço visível em 1ª pessoa, mira com contorno, partículas (quebrar bloco, comer, golpe crítico, dano)
+- Agachar não deixa cair da borda do bloco
+- Chat em tela cheia com histórico `<nick> mensagem` (limpa ao sair do mundo)
+- Botão voltar do Android abre/fecha a pausa; mouse sem precisar segurar botão (celular com mouse)
+- HUD respeita a área segura da tela; Configurações > Geral: tamanho da HUD e "Subir HUD"; Pausa > Ajustar botões da HUD
+- Novos comandos: `/say /title /fill /setblock /clear`
+
+Não implementado ainda: menu novo com avatar 3D e servidores, 3ª pessoa, baú com inventário, sistema de mods `.stc`.

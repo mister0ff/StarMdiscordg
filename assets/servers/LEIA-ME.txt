@@ -1,4 +1,0 @@
-Coloque aqui as imagens dos servidores (nomes exatos). Elas têm prioridade sobre o download:
-  starcat_banner.jpg   starcat_logo.png
-  auralis_banner.jpg   auralis_logo.jpg
-Se não existirem, o jogo baixa dos links do Discord (se ainda válidos) e guarda em cache.

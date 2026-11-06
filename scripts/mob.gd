@@ -4,11 +4,11 @@ extends CharacterBody3D
 ## Simulado no host (ou no modo solo); clientes usam "puppet" interpolado.
 
 const TYPES := {
-	"pig": {"hp": 8.0, "speed": 2.0, "hostile": false, "w": 0.42, "h": 0.9, "behavior": "passive"},
-	"cow": {"hp": 10.0, "speed": 1.8, "hostile": false, "w": 0.5, "h": 1.4, "behavior": "passive"},
-	"zombie": {"hp": 20.0, "speed": 3.0, "hostile": true, "w": 0.3, "h": 1.9, "behavior": "melee", "dmg": 3.0, "burns": true},
-	"skeleton": {"hp": 16.0, "speed": 2.8, "hostile": true, "w": 0.3, "h": 1.9, "behavior": "ranged", "burns": true},
-	"creeper": {"hp": 16.0, "speed": 2.6, "hostile": true, "w": 0.3, "h": 1.7, "behavior": "explode"},
+	"pig": {"hp": 8.0, "speed": 2.0, "hostile": false, "w": 0.42, "h": 0.9},
+	"cow": {"hp": 10.0, "speed": 1.8, "hostile": false, "w": 0.5, "h": 1.4},
+	"zombie": {"hp": 20.0, "speed": 3.0, "hostile": true, "w": 0.3, "h": 1.9},
+	"skeleton": {"hp": 16.0, "speed": 2.8, "hostile": true, "w": 0.3, "h": 1.9},
+	"creeper": {"hp": 16.0, "speed": 2.6, "hostile": true, "w": 0.3, "h": 1.7},
 }
 
 var kind := "pig"
@@ -18,7 +18,6 @@ var hp := 10.0
 var hit_w := 0.4
 var hit_h := 1.0
 var hostile := false
-var behavior := "passive"
 var game: Node
 var world: World
 
@@ -43,16 +42,9 @@ var _last_pos := Vector3.ZERO
 var _speed_now := 0.0
 
 
-static func def_of(k: String) -> Dictionary:
-	if TYPES.has(k):
-		return TYPES[k]
-	return Blocks.mob_defs.get(k, TYPES["pig"])
-
-
 func setup(k: String) -> void:
 	kind = k
-	var d: Dictionary = def_of(k)
-	behavior = d.get("behavior", "passive")
+	var d: Dictionary = TYPES[k]
 	hp = d["hp"]
 	hit_w = d["w"]
 	hit_h = d["h"]
@@ -97,7 +89,6 @@ func _leg(size: Vector3, top: Vector3, col: Color) -> Node3D:
 	_model.add_child(pivot)
 	_mats.append(m.material_override)
 	_base_cols.append(col)
-	pivot.set_meta("phase", 0.0 if (_legs.size() == 0 or _legs.size() == 3) else PI)
 	_legs.append(pivot)
 	return pivot
 
@@ -109,9 +100,6 @@ func _eyes(head: Node3D, z: float, y := 0.04, gap := 0.12) -> void:
 
 
 func _build_model() -> void:
-	if Blocks.mob_defs.has(kind):
-		ModelBuilder.build(Blocks.mob_defs[kind], _model, _legs, _arms, _mats, _base_cols)
-		return
 	match kind:
 		"pig":
 			var pink := Color(0.93, 0.66, 0.66)
@@ -180,7 +168,7 @@ func _physics_process(delta: float) -> void:
 	_atk_cd = maxf(0.0, _atk_cd - delta)
 	_flee = maxf(0.0, _flee - delta)
 
-	var d: Dictionary = def_of(kind)
+	var d: Dictionary = TYPES[kind]
 	var speed: float = d["speed"]
 	var tgt := _nearest_player()
 	var want := Vector3.ZERO
@@ -191,13 +179,13 @@ func _physics_process(delta: float) -> void:
 		var dist := to.length()
 		var dn := to.normalized() if dist > 0.01 else Vector3.ZERO
 		face = dn
-		match behavior:
-			"melee":
+		match kind:
+			"zombie":
 				want = dn * speed
 				if dist < 1.4 and absf(tgt["pos"].y - global_position.y) < 1.8 and _atk_cd <= 0.0:
 					_atk_cd = 1.0
-					game.damage_player(tgt["id"], float(d.get("dmg", 3.0)), dn * 7.0)
-			"ranged":
+					game.damage_player(tgt["id"], 3.0, dn * 7.0)
+			"skeleton":
 				if dist > 9.0:
 					want = dn * speed
 				elif dist < 5.0:
@@ -209,7 +197,7 @@ func _physics_process(delta: float) -> void:
 					var v: Vector3 = (tgt["pos"] + Vector3(0, 1.3, 0) - from).normalized() * 17.0
 					v.y += dist * 0.12
 					game.spawn_arrow_net(from, v)
-			"explode":
+			"creeper":
 				if _fuse >= 0.0:
 					_fuse += delta
 					want = Vector3.ZERO
@@ -240,7 +228,7 @@ func _physics_process(delta: float) -> void:
 	if _fuse >= 0.0:
 		want = Vector3.ZERO
 	# queimar de dia
-	if d.get("burns", false) and game.daylight > 0.75:
+	if kind in ["zombie", "skeleton"] and game.daylight > 0.75:
 		var sx := floori(global_position.x)
 		var sz := floori(global_position.z)
 		if world.surface_y(sx, sz) <= floori(global_position.y) + 1:
@@ -285,7 +273,7 @@ func _animate(delta: float) -> void:
 	_anim_t += delta * (4.0 + _speed_now * 2.5)
 	var amp := clampf(_speed_now / 3.0, 0.0, 1.0) * 0.8
 	for i in _legs.size():
-		var ph: float = _legs[i].get_meta("phase", 0.0 if (i == 0 or i == 3) else PI)
+		var ph := 0.0 if (i == 0 or i == 3) else PI
 		_legs[i].rotation.x = sin(_anim_t + ph) * amp
 	if kind == "skeleton":
 		for i in _arms.size():
@@ -338,13 +326,6 @@ func net_state() -> Array:
 
 func drops() -> Array:
 	var out: Array = []
-	if Blocks.mob_defs.has(kind):
-		for dr in Blocks.mob_defs[kind].get("drops", []):
-			if randf() <= float(dr[3]):
-				var q := randi_range(int(dr[1]), maxi(int(dr[1]), int(dr[2])))
-				if q > 0:
-					out.append([int(dr[0]), q])
-		return out
 	match kind:
 		"pig":
 			out.append([Blocks.RAW_PORK, randi_range(1, 3)])

@@ -23,10 +23,9 @@ const SNOW := 17
 const GRAVEL := 18
 const BRICK := 19
 const TORCH := 20
-const BASE_MAX_BLOCK := 20
-const MOD_BLOCK_FIRST := 21
-const MOD_BLOCK_LAST := 99
-const MOD_ITEM_FIRST := 200
+const CHEST := 21
+const MAX_BLOCK := 21 # último bloco "de fábrica"; blocos de mods usam 22..99 e 160..255
+const LIGHT_MAX := 8
 
 # ---- IDs de itens ----
 const STICK := 100
@@ -54,57 +53,56 @@ const TIER_COLORS := [Color(0.62, 0.46, 0.26), Color(0.55, 0.55, 0.57), Color(0.
 const TIER_SPEED := [2.0, 4.0, 6.0, 8.0]
 const TIER_DUR := [60, 132, 251, 1562]
 
-const ATLAS_COLS := 8
+const ATLAS_COLS := 16
+const ATLAS_ROWS := 16
 const TILE_NAMES := [
 	"grass_top", "grass_side", "dirt", "stone", "cobble", "sand", "water", "log_side",
 	"log_top", "leaves", "planks", "coal_ore", "iron_ore", "diamond_ore", "bedrock", "glass",
-	"table_top", "table_side", "furnace_side", "furnace_top", "snow", "gravel", "brick", "torch",
+	"table_top", "table_side", "furnace_side", "furnace_top", "snow", "gravel", "brick",
+	"torch", "chest_top", "chest_side",
 ]
 
-var max_block := BASE_MAX_BLOCK
 var defs: Dictionary = {}
 var recipes: Array = []
 var food: Dictionary = {}
-var mob_defs: Dictionary = {}
-var key_to_id: Dictionary = {}
-var id_to_key: Dictionary = {}
-var light: Dictionary = {}
-var tiles: Array = []
-var mod_tiles: Dictionary = {}
-var mod_ids: Array = []
-var _base_recipes := 0
-var _base_food: Dictionary = {}
-var _tile_color_cache: Dictionary = {}
 var atlas_tex: ImageTexture
 var atlas_img: Image
+var tile_names: Array = []
+var mod_tiles: Dictionary = {}
+var name_ids: Dictionary = {}  # "dirt" / "star:dirt" / "mod:item" -> id
+var id_names: Dictionary = {}  # id -> nome com namespace
 var _icons: Dictionary = {}
+var _avg: Dictionary = {}
 var _tile_index: Dictionary = {}
+var _base_ids: Dictionary = {}
+var _base_names: Dictionary = {}
+var _base_recipe_count := 0
+var _unknown := {"name": "?", "hard": 1.0, "tool": -1, "min_tier": -1, "drop": 0, "tiles": ["grass_top", "grass_top", "grass_top"],
+	"solid": false, "opaque": false, "stack": 64, "block": true, "icon_tile": "grass_top", "light": 0}
 
 
 func _ready() -> void:
-	tiles = TILE_NAMES.duplicate()
-	_reindex_tiles()
+	tile_names = TILE_NAMES.duplicate()
+	for i in tile_names.size():
+		_tile_index[tile_names[i]] = i
 	_define_blocks()
 	_define_items()
 	_define_recipes()
-	_register_keys()
-	_base_recipes = recipes.size()
-	_base_food = food.duplicate()
+	_define_names()
+	_base_recipe_count = recipes.size()
+	for k in defs:
+		_base_ids[k] = true
+	for k in name_ids:
+		_base_names[k] = true
 	_build_atlas()
 
 
-func _reindex_tiles() -> void:
-	_tile_index.clear()
-	for i in tiles.size():
-		_tile_index[tiles[i]] = i
-
-
 # ---------------------------------------------------------------- definições
-func _b(id: int, nm: String, hard: float, tool: int, min_tier: int, drop: int, tiles: Array, solid := true, opaque := true) -> void:
+func _b(id: int, nm: String, hard: float, tool: int, min_tier: int, drop: int, tiles: Array, solid := true, opaque := true, light := 0) -> void:
 	defs[id] = {
 		"name": nm, "hard": hard, "tool": tool, "min_tier": min_tier, "drop": drop,
 		"tiles": tiles, "solid": solid, "opaque": opaque, "stack": 64, "block": true,
-		"icon_tile": tiles[1],
+		"icon_tile": tiles[1], "light": light,
 	}
 
 
@@ -128,10 +126,8 @@ func _define_blocks() -> void:
 	_b(SNOW, "Neve", 0.3, KIND_SHOVEL, -1, SNOW, ["snow", "snow", "snow"])
 	_b(GRAVEL, "Cascalho", 0.6, KIND_SHOVEL, -1, GRAVEL, ["gravel", "gravel", "gravel"])
 	_b(BRICK, "Tijolos", 2.0, KIND_PICK, 0, BRICK, ["brick", "brick", "brick"])
-	_b(TORCH, "Tocha", 0.0, -1, -1, TORCH, ["torch", "torch", "torch"], false, false)
-	defs[TORCH]["torch"] = true
-	defs[TORCH]["light"] = 14
-	light[TORCH] = 14
+	_b(TORCH, "Tocha", 0.0, -1, -1, TORCH, ["torch", "torch", "torch"], false, false, LIGHT_MAX)
+	_b(CHEST, "Baú", 2.5, KIND_AXE, -1, CHEST, ["chest_top", "chest_side", "chest_top"])
 	defs[GRASS]["icon_tile"] = "grass_side"
 	defs[LOG]["icon_tile"] = "log_side"
 
@@ -174,10 +170,10 @@ func _define_recipes() -> void:
 	_r(PLANKS, 4, {LOG: 1})
 	_r(STICK, 4, {PLANKS: 2})
 	_r(TABLE, 1, {PLANKS: 4})
-	_r(TORCH, 4, {COAL: 1, STICK: 1})
 	_r(FURNACE, 1, {COBBLE: 8}, 1)
 	_r(BRICK, 2, {STONE: 4}, 1)
 	_r(GLASS, 1, {SAND: 1, COAL: 1}, 2)
+	_r(TORCH, 4, {COAL: 1, STICK: 1})
 	var mats := [PLANKS, COBBLE, IRON_INGOT, DIAMOND]
 	for t in 4:
 		var m: int = mats[t]
@@ -192,166 +188,104 @@ func _define_recipes() -> void:
 	_r(STEAK, 1, {RAW_BEEF: 1, COAL: 1}, 2)
 
 
-# ---------------------------------------------------------------- chaves (namespace star:)
-const ALIASES := {
-	"tabuas": "planks", "terra": "dirt", "pedra": "stone", "madeira": "log", "tronco": "log",
-	"graveto": "stick", "carvao": "coal", "areia": "sand", "vidro": "glass", "tocha": "torch",
-	"diamante": "diamond", "grama": "grass", "folhas": "leaves", "tijolos": "brick",
-}
-
-
-func _register_keys() -> void:
-	var names := {
-		GRASS: "grass", DIRT: "dirt", STONE: "stone", COBBLE: "cobble", SAND: "sand", WATER: "water",
-		LOG: "log", LEAVES: "leaves", PLANKS: "planks", COAL_ORE: "coal_ore", IRON_ORE: "iron_ore",
-		DIAMOND_ORE: "diamond_ore", BEDROCK: "bedrock", GLASS: "glass", TABLE: "table", FURNACE: "furnace",
-		SNOW: "snow", GRAVEL: "gravel", BRICK: "brick", TORCH: "torch", STICK: "stick", COAL: "coal",
-		IRON_INGOT: "iron_ingot", DIAMOND: "diamond", RAW_PORK: "raw_pork", COOKED_PORK: "cooked_pork",
-		LEATHER: "leather", RAW_BEEF: "raw_beef", STEAK: "steak", ROTTEN: "rotten_flesh", BONE: "bone",
-		GUNPOWDER: "gunpowder", APPLE: "apple",
+func _define_names() -> void:
+	var m := {
+		"grass": GRASS, "dirt": DIRT, "stone": STONE, "cobblestone": COBBLE, "sand": SAND, "water": WATER,
+		"log": LOG, "leaves": LEAVES, "planks": PLANKS, "coal_ore": COAL_ORE, "iron_ore": IRON_ORE,
+		"diamond_ore": DIAMOND_ORE, "bedrock": BEDROCK, "glass": GLASS, "crafting_table": TABLE,
+		"furnace": FURNACE, "snow": SNOW, "gravel": GRAVEL, "bricks": BRICK, "torch": TORCH, "chest": CHEST,
+		"stick": STICK, "coal": COAL, "iron_ingot": IRON_INGOT, "diamond": DIAMOND, "raw_porkchop": RAW_PORK,
+		"cooked_porkchop": COOKED_PORK, "leather": LEATHER, "raw_beef": RAW_BEEF, "steak": STEAK,
+		"rotten_flesh": ROTTEN, "bone": BONE, "gunpowder": GUNPOWDER, "apple": APPLE,
 	}
-	for id in names:
-		_set_key(id, "star:" + names[id])
-	var tn := ["wooden", "stone", "iron", "diamond"]
-	var kn := ["pickaxe", "axe", "shovel", "sword"]
+	var tiers := ["wooden", "stone", "iron", "diamond"]
+	var kinds := ["pickaxe", "axe", "shovel", "sword"]
 	for t in 4:
 		for k in 4:
-			_set_key(TOOL_BASE + t * 10 + k, "star:%s_%s" % [tn[t], kn[k]])
+			m["%s_%s" % [tiers[t], kinds[k]]] = TOOL_BASE + t * 10 + k
+	for k in m:
+		name_ids[k] = m[k]
+		id_names[m[k]] = "star:" + k
+	var alias := {
+		"cobble": COBBLE, "table": TABLE, "workbench": TABLE, "brick": BRICK, "raw_pork": RAW_PORK,
+		"cooked_pork": COOKED_PORK, "rotten": ROTTEN, "iron": IRON_INGOT, "wood": LOG, "plank": PLANKS,
+		"tocha": TORCH, "bau": CHEST, "terra": DIRT, "pedra": STONE, "grama": GRASS, "areia": SAND,
+	}
+	for k in alias:
+		name_ids[k] = alias[k]
 
 
-func _set_key(id: int, key: String) -> void:
-	key_to_id[key] = id
-	id_to_key[id] = key
-
-
-func key_of(id: int) -> String:
-	return id_to_key.get(id, str(id))
-
-
-## "star:dirt", "dirt", "terra" ou número -> id (ou -1)
-func resolve(v: Variant) -> int:
-	if v is int:
-		return v if defs.has(v) else -1
-	var s := str(v).strip_edges().to_lower()
-	if s == "" or s == "air" or s == "star:air":
+## Converte "star:dirt", "dirt", "mod:item" ou "12" em id. -1 se não existir.
+func resolve(s: String) -> int:
+	s = s.strip_edges().to_lower()
+	if s.is_empty():
 		return -1
 	if s.is_valid_int():
 		var n := int(s)
 		return n if defs.has(n) else -1
-	if key_to_id.has(s):
-		return key_to_id[s]
-	if not s.contains(":"):
-		var a: String = ALIASES.get(s, s)
-		if key_to_id.has("star:" + a):
-			return key_to_id["star:" + a]
-	elif s.begins_with("star:"):
-		var b: String = ALIASES.get(s.substr(5), s.substr(5))
-		if key_to_id.has("star:" + b):
-			return key_to_id["star:" + b]
+	if name_ids.has(s):
+		return int(name_ids[s])
+	var ci := s.find(":")
+	if ci > 0:
+		var ns := s.substr(0, ci)
+		var bare := s.substr(ci + 1)
+		if (ns == "star" or ns == "minecraft") and name_ids.has(bare):
+			return int(name_ids[bare])
 	return -1
 
 
-# ---------------------------------------------------------------- API de mods
-func reset_mods() -> void:
-	for id in mod_ids:
-		defs.erase(id)
-		light.erase(id)
-		key_to_id.erase(id_to_key.get(id, ""))
-		id_to_key.erase(id)
-	mod_ids.clear()
-	recipes.resize(_base_recipes)
-	food = _base_food.duplicate()
-	mob_defs.clear()
-	mod_tiles.clear()
-	max_block = BASE_MAX_BLOCK
-	tiles = TILE_NAMES.duplicate()
-	_reindex_tiles()
-	_tile_color_cache.clear()
-	_icons.clear()
-	_build_atlas()
+func ns_name(id: int) -> String:
+	return str(id_names.get(id, str(id)))
 
 
-func define_mod_entry(id: int, key: String, d: Dictionary) -> void:
-	defs[id] = d
-	_set_key(id, key)
-	mod_ids.append(id)
-	if d.get("block", false):
-		max_block = maxi(max_block, id)
-	var lv := int(d.get("light", 0))
-	if lv > 0:
-		light[id] = lv
-
-
-func add_mod_tile(tname: String, img: Image) -> void:
-	var t := img.duplicate() as Image
-	t.convert(Image.FORMAT_RGBA8)
-	if t.get_width() != 16 or t.get_height() != 16:
-		t.resize(16, 16, Image.INTERPOLATE_NEAREST)
-	mod_tiles[tname] = t
-	if not tiles.has(tname):
-		tiles.append(tname)
-	_reindex_tiles()
-
-
-func rebuild_atlas() -> void:
-	_tile_color_cache.clear()
-	_build_atlas()
-
-
-func light_of(id: int) -> int:
-	return int(light.get(id, 0))
-
-
-func tile_color(tname: String) -> Color:
-	if _tile_color_cache.has(tname):
-		return _tile_color_cache[tname]
-	var i := tile_index(tname)
-	var ox := (i % ATLAS_COLS) * 16
-	var oy := (i / ATLAS_COLS) * 16
-	var r := 0.0
-	var g := 0.0
-	var b := 0.0
-	var n := 0
-	for y in 16:
-		for x in 16:
-			var c := atlas_img.get_pixel(ox + x, oy + y)
-			if c.a > 0.5:
-				r += c.r
-				g += c.g
-				b += c.b
-				n += 1
-	var out := Color(0.5, 0.5, 0.5) if n == 0 else Color(r / n, g / n, b / n)
-	_tile_color_cache[tname] = out
-	return out
+func d_of(id: int) -> Dictionary:
+	return defs[id] if defs.has(id) else _unknown
 
 
 # ---------------------------------------------------------------- consultas
 func name_of(id: int) -> String:
-	return defs[id]["name"] if defs.has(id) else "?"
+	return str(defs[id]["name"]) if defs.has(id) else "?"
 
 
 func is_block(id: int) -> bool:
-	return id > 0 and defs.has(id) and defs[id]["block"]
+	return id > 0 and defs.has(id) and bool(defs[id].get("block", false))
 
 
 func is_solid(id: int) -> bool:
-	return id != AIR and defs.has(id) and defs[id]["solid"]
+	return id != AIR and defs.has(id) and bool(defs[id]["solid"])
 
 
 func is_opaque(id: int) -> bool:
-	return id != AIR and defs.has(id) and defs[id]["opaque"]
+	return id != AIR and defs.has(id) and bool(defs[id]["opaque"])
+
+
+func light_of(id: int) -> int:
+	return int(defs[id].get("light", 0)) if defs.has(id) else 0
 
 
 func is_tool(id: int) -> bool:
-	return defs.has(id) and defs[id].has("dur")
+	return defs.has(id) and defs[id].has("tool_kind")
+
+
+func has_dur(id: int) -> bool:
+	return defs.has(id) and int(defs[id].get("dur", 0)) > 0
 
 
 func tool_kind(id: int) -> int:
-	return int(defs[id].get("tool_kind", -1)) if defs.has(id) else -1
+	return int(defs[id]["tool_kind"]) if is_tool(id) else -1
 
 
 func tool_tier(id: int) -> int:
-	return int(defs[id].get("tool_tier", -1)) if defs.has(id) else -1
+	return int(defs[id].get("tool_tier", 0)) if is_tool(id) else -1
+
+
+func tool_speed(id: int) -> float:
+	if not is_tool(id):
+		return 1.0
+	var d: Dictionary = defs[id]
+	if d.has("speed"):
+		return float(d["speed"])
+	return float(TIER_SPEED[clampi(int(d.get("tool_tier", 0)), 0, 3)])
 
 
 func max_dur(id: int) -> int:
@@ -362,46 +296,43 @@ func stack_of(id: int) -> int:
 	return int(defs[id]["stack"]) if defs.has(id) else 64
 
 
-func can_break_with(held: int) -> bool:
-	return held == 0 or not defs.has(held) or bool(defs[held].get("can_break", true))
-
-
-func _tool_speed(held: int) -> float:
-	if defs.has(held) and defs[held].has("mine_speed"):
-		return float(defs[held]["mine_speed"])
-	return TIER_SPEED[clampi(tool_tier(held), 0, 3)]
-
-
 func attack_damage(held: int) -> float:
-	if held == 0 or not defs.has(held):
+	if not defs.has(held):
 		return 1.0
-	if defs[held].has("attack"):
-		return float(defs[held]["attack"])
-	if not is_tool(held) or tool_kind(held) < 0:
+	var d: Dictionary = defs[held]
+	if d.has("dmg"):
+		return float(d["dmg"])
+	if not is_tool(held):
 		return 1.0
 	var base := [2.0, 3.0, 1.0, 4.0]
-	return base[tool_kind(held)] + float(maxi(tool_tier(held), 0))
+	var k := tool_kind(held)
+	if k < 0 or k > 3:
+		return 1.0
+	return float(base[k]) + float(tool_tier(held))
 
 
 func can_harvest(block: int, held: int) -> bool:
-	var d: Dictionary = defs[block]
-	if d["min_tier"] < 0:
+	var d: Dictionary = d_of(block)
+	if int(d["min_tier"]) < 0:
 		return true
-	return tool_kind(held) == d["tool"] and tool_tier(held) >= d["min_tier"]
+	return tool_kind(held) == int(d["tool"]) and tool_tier(held) >= int(d["min_tier"])
 
 
 func break_time(block: int, held: int) -> float:
-	var d: Dictionary = defs[block]
-	var h: float = d["hard"]
-	if h < 0.0 or not can_break_with(held):
+	var d: Dictionary = d_of(block)
+	var h: float = float(d["hard"])
+	if h < 0.0:
 		return INF
-	var good: bool = d["tool"] >= 0 and tool_kind(held) == d["tool"]
-	if d["min_tier"] >= 0:
-		if good and tool_tier(held) >= d["min_tier"]:
-			return h * 1.5 / _tool_speed(held)
+	if held != 0 and defs.has(held) and bool(defs[held].get("no_break", false)):
+		return INF
+	var good: bool = int(d["tool"]) >= 0 and tool_kind(held) == int(d["tool"])
+	var spd := tool_speed(held)
+	if int(d["min_tier"]) >= 0:
+		if good and tool_tier(held) >= int(d["min_tier"]):
+			return h * 1.5 / spd
 		return h * 5.0
 	if good:
-		return h * 1.5 / _tool_speed(held)
+		return h * 1.5 / spd
 	return h * 1.5
 
 
@@ -416,10 +347,87 @@ func drops_for(block: int, held: int) -> Array:
 		if r < 0.2:
 			return [STICK, 1]
 		return []
-	var d: int = defs[block]["drop"]
-	if d == 0:
+	var d: Dictionary = d_of(block)
+	var dr: int = int(d["drop"])
+	if dr == 0:
 		return []
-	return [d, int(defs[block].get("drop_n", 1))]
+	return [dr, int(d.get("drop_n", 1))]
+
+
+# ---------------------------------------------------------------- mods (registro em tempo de execução)
+func register_mod_def(id: int, full_name: String, d: Dictionary) -> void:
+	defs[id] = d
+	name_ids[full_name.to_lower()] = id
+	id_names[id] = full_name.to_lower()
+
+
+func add_mod_tile(tname: String, img: Image) -> bool:
+	if tile_names.size() >= ATLAS_COLS * ATLAS_ROWS:
+		return false
+	var im: Image = img.duplicate()
+	im.convert(Image.FORMAT_RGBA8)
+	if im.get_width() != 16 or im.get_height() != 16:
+		im.resize(16, 16, Image.INTERPOLATE_NEAREST)
+	mod_tiles[tname] = im
+	_tile_index[tname] = tile_names.size()
+	tile_names.append(tname)
+	return true
+
+
+func rebuild_atlas() -> void:
+	_build_atlas()
+
+
+func reset_mods() -> void:
+	for id in defs.keys():
+		if not _base_ids.has(id):
+			defs.erase(id)
+	recipes = recipes.slice(0, _base_recipe_count)
+	for k in food.keys():
+		if not _base_ids.has(k):
+			food.erase(k)
+	for k in name_ids.keys():
+		if not _base_names.has(k):
+			name_ids.erase(k)
+	for k in id_names.keys():
+		if not _base_ids.has(k):
+			id_names.erase(k)
+	tile_names = TILE_NAMES.duplicate()
+	mod_tiles.clear()
+	_tile_index.clear()
+	for i in tile_names.size():
+		_tile_index[tile_names[i]] = i
+	_build_atlas()
+
+
+func avg_color(id: int) -> Color:
+	if _avg.has(id):
+		return _avg[id]
+	var c := Color(0.6, 0.6, 0.6)
+	if defs.has(id):
+		var d: Dictionary = defs[id]
+		if bool(d.get("block", false)):
+			var i: int = tile_index(str(d["icon_tile"]))
+			var ox := (i % ATLAS_COLS) * 16
+			var oy := (i / ATLAS_COLS) * 16
+			var r := 0.0
+			var g := 0.0
+			var b := 0.0
+			var n := 0
+			for y in 16:
+				for x in 16:
+					var px: Color = atlas_img.get_pixel(ox + x, oy + y)
+					if px.a > 0.5:
+						r += px.r
+						g += px.g
+						b += px.b
+						n += 1
+			if n > 0:
+				c = Color(r / n, g / n, b / n)
+		elif d.has("color"):
+			c = d["color"]
+	_avg[id] = c
+	return c
 
 
 # ---------------------------------------------------------------- atlas
@@ -429,26 +437,27 @@ func tile_index(tname: String) -> int:
 
 func tile_uv(tname: String) -> Vector2:
 	var i: int = tile_index(tname)
-	return Vector2(float(i % ATLAS_COLS) / ATLAS_COLS, float(i / ATLAS_COLS) / _atlas_rows())
+	return Vector2(float(i % ATLAS_COLS) / ATLAS_COLS, float(i / ATLAS_COLS) / ATLAS_ROWS)
 
 
 func _atlas_rows() -> int:
-	return int(ceil(float(tiles.size()) / ATLAS_COLS))
+	return ATLAS_ROWS
 
 
 func _build_atlas() -> void:
-	var rows := _atlas_rows()
-	atlas_img = Image.create(16 * ATLAS_COLS, 16 * rows, false, Image.FORMAT_RGBA8)
+	atlas_img = Image.create(16 * ATLAS_COLS, 16 * ATLAS_ROWS, false, Image.FORMAT_RGBA8)
 	atlas_img.fill(Color(0, 0, 0, 0))
-	for i in tiles.size():
+	for i in tile_names.size():
+		var nm: String = tile_names[i]
 		var t: Image
-		if mod_tiles.has(tiles[i]):
-			t = mod_tiles[tiles[i]]
+		if i < TILE_NAMES.size():
+			t = _gen_tile(nm, i)
 		else:
-			t = _gen_tile(tiles[i], i)
+			t = mod_tiles[nm]
 		atlas_img.blit_rect(t, Rect2i(0, 0, 16, 16), Vector2i((i % ATLAS_COLS) * 16, (i / ATLAS_COLS) * 16))
 	atlas_tex = ImageTexture.create_from_image(atlas_img)
 	_icons.clear()
+	_avg.clear()
 
 
 func _fill_noise(img: Image, base: Color, amt: float, rng: RandomNumberGenerator) -> void:
@@ -567,13 +576,34 @@ func _gen_tile(tname: String, idx: int) -> Image:
 		"torch":
 			img.fill(Color(0, 0, 0, 0))
 			for y in range(6, 16):
-				img.set_pixel(7, y, Color(0.5, 0.36, 0.18))
-				img.set_pixel(8, y, Color(0.38, 0.26, 0.13))
-			for y in range(4, 6):
-				img.set_pixel(7, y, Color(1.0, 0.88, 0.25))
-				img.set_pixel(8, y, Color(1.0, 0.62, 0.12))
-			img.set_pixel(7, 3, Color(1.0, 0.7, 0.2, 0.9))
-			img.set_pixel(8, 3, Color(1.0, 0.5, 0.1, 0.9))
+				img.set_pixel(7, y, Color(0.45, 0.3, 0.15))
+				img.set_pixel(8, y, Color(0.35, 0.23, 0.1))
+			for y in range(6, 9):
+				img.set_pixel(7, y, Color(1.0, 0.85, 0.2))
+				img.set_pixel(8, y, Color(1.0, 0.6, 0.1))
+			for y in range(3, 6):
+				for x in range(6, 10):
+					if y == 3 and (x == 6 or x == 9):
+						continue
+					img.set_pixel(x, y, Color(1.0, 0.65 + 0.1 * float(y - 3), 0.15, 1.0))
+		"chest_top":
+			_fill_noise(img, Color(0.6, 0.42, 0.2), 0.03, rng)
+			for i in 16:
+				img.set_pixel(i, 0, Color(0.33, 0.2, 0.09))
+				img.set_pixel(i, 15, Color(0.33, 0.2, 0.09))
+				img.set_pixel(0, i, Color(0.33, 0.2, 0.09))
+				img.set_pixel(15, i, Color(0.33, 0.2, 0.09))
+		"chest_side":
+			_fill_noise(img, Color(0.62, 0.44, 0.22), 0.03, rng)
+			for i in 16:
+				img.set_pixel(i, 0, Color(0.33, 0.2, 0.09))
+				img.set_pixel(i, 15, Color(0.33, 0.2, 0.09))
+				img.set_pixel(0, i, Color(0.33, 0.2, 0.09))
+				img.set_pixel(15, i, Color(0.33, 0.2, 0.09))
+				img.set_pixel(i, 6, Color(0.4, 0.26, 0.12))
+			for y in range(5, 10):
+				img.set_pixel(7, y, Color(0.85, 0.8, 0.5))
+				img.set_pixel(8, y, Color(0.75, 0.7, 0.4))
 		"brick":
 			_fill_noise(img, Color(0.62, 0.28, 0.22), 0.04, rng)
 			for y in 16:
@@ -592,14 +622,14 @@ func icon(id: int) -> Texture2D:
 		return _icons[id]
 	var tex: Texture2D
 	var d: Dictionary = defs[id]
-	if d.has("icon_tex"):
-		tex = d["icon_tex"]
-	elif d["block"]:
+	if d["block"]:
 		var at := AtlasTexture.new()
 		at.atlas = atlas_tex
 		var i: int = tile_index(d["icon_tile"])
 		at.region = Rect2((i % ATLAS_COLS) * 16, (i / ATLAS_COLS) * 16, 16, 16)
 		tex = at
+	elif d.get("shape", "") == "texture" and d.has("tex"):
+		tex = d["tex"]
 	else:
 		tex = ImageTexture.create_from_image(_gen_icon(d))
 	_icons[id] = tex
@@ -609,10 +639,10 @@ func icon(id: int) -> Texture2D:
 func _gen_icon(d: Dictionary) -> Image:
 	var img := Image.create(16, 16, false, Image.FORMAT_RGBA8)
 	img.fill(Color(0, 0, 0, 0))
-	var col: Color = d["color"]
+	var col: Color = d.get("color", Color(0.7, 0.7, 0.7))
 	var dark := col.darkened(0.35)
 	var wood := Color(0.5, 0.35, 0.18)
-	match d["shape"]:
+	match str(d.get("shape", "blob")):
 		"line":
 			for i in range(2, 14):
 				img.set_pixel(i, 15 - i, col)

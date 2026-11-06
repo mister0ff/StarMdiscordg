@@ -132,12 +132,12 @@ func apply_look(d: Vector2) -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if ui_open or dead:
 		return
-	if event is InputEventMouseMotion and event.device != InputEvent.DEVICE_ID_EMULATION:
+	if event is InputEventMouseMotion and event.device != -1:
 		if not Settings.mouse_seen:
 			Settings.mouse_seen = true
 			Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 		apply_look(event.relative * 0.0022 * Settings.look_sens)
-	elif event is InputEventMouseButton and event.device != InputEvent.DEVICE_ID_EMULATION:
+	elif event is InputEventMouseButton and event.device != -1:
 		var ka: Dictionary = Settings.keys["attack"]
 		var kp: Dictionary = Settings.keys["place"]
 		if ka["t"] == "m" and int(ka["c"]) == event.button_index:

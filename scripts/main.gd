@@ -24,6 +24,7 @@ var daylight := 1.0
 var spawn_point := Vector3(0, 40, 0)
 var online := false
 var always_day := false
+var ephemeral := false
 var commands_on := false
 var world_type := "normal"
 var is_host := false
@@ -127,8 +128,9 @@ func _build_ui() -> void:
 
 
 # ================================================================ fluxo
-func start_world(creative: bool, seed_val: int, mobs_on: bool, load_save: bool, host_port := 0, wtype := "normal", always := false, cmds := true) -> void:
+func start_world(creative: bool, seed_val: int, mobs_on: bool, load_save: bool, host_port := 0, wtype := "normal", always := false, cmds := true, no_save := false) -> void:
 	_cleanup_world()
+	ephemeral = no_save
 	creative_mode = creative
 	mobs_enabled = mobs_on
 	world_type = wtype
@@ -265,8 +267,19 @@ func _apply_view_distance() -> void:
 
 
 # ================================================================ salvar / carregar
+func read_save_public() -> Dictionary:
+	return _read_save()
+
+
+func write_save_public(d: Dictionary) -> void:
+	var f := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
+	if f != null:
+		f.store_var(d, false)
+		f.close()
+
+
 func save_game() -> void:
-	if local_player == null:
+	if local_player == null or ephemeral:
 		return
 	var d := {
 		"seed": world.seed_val, "creative": creative_mode, "mobs": mobs_enabled,

@@ -1,0 +1,4 @@
+Coloque aqui as imagens dos servidores (o jogo usa se existirem; senão mostra cor sólida):
+starcat_banner.jpg  starcat_logo.png
+auralis_banner.jpg  auralis_logo.jpg
+(aceita .png .jpg .jpeg .webp)

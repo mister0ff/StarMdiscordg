@@ -24,7 +24,9 @@ const GRAVEL := 18
 const BRICK := 19
 const TORCH := 20
 const CHEST := 21
-const MAX_BLOCK := 21 # último bloco "vanilla"
+const WATER_F1 := 22 # água corrente: 22..28 = força 1..7 (8 = fonte, id WATER)
+const WATER_F7 := 28
+const MAX_BLOCK := 28 # último bloco "vanilla"
 const MOD_BLOCK_MIN := 40 # blocos de mods usam 40..255
 const MOD_ITEM_BASE := 1000 # itens de mods usam 1000+
 
@@ -127,6 +129,11 @@ func _define_blocks() -> void:
 	defs[TORCH]["light"] = 13
 	defs[TORCH]["shape"] = "torch"
 	_b(CHEST, "Baú", 2.5, KIND_AXE, -1, CHEST, ["chest_top", "chest_side", "chest_top"])
+	for fl in range(1, 8):
+		_b(WATER_F1 + fl - 1, "Água corrente", -1.0, -1, -1, 0, ["water", "water", "water"], false, false)
+		defs[WATER_F1 + fl - 1]["flow"] = fl
+	defs[SAND]["falls"] = true
+	defs[GRAVEL]["falls"] = true
 	defs[GRASS]["icon_tile"] = "grass_side"
 	defs[LOG]["icon_tile"] = "log_side"
 
@@ -191,6 +198,23 @@ func _define_recipes() -> void:
 # ---------------------------------------------------------------- consultas
 func name_of(id: int) -> String:
 	return defs[id]["name"] if defs.has(id) else "?"
+
+
+func is_water(id: int) -> bool:
+	return id == WATER or (id >= WATER_F1 and id <= WATER_F7)
+
+
+## 8 = fonte, 1..7 = corrente, 0 = não é água
+func water_level(id: int) -> int:
+	if id == WATER:
+		return 8
+	if id >= WATER_F1 and id <= WATER_F7:
+		return id - WATER_F1 + 1
+	return 0
+
+
+func falls(id: int) -> bool:
+	return defs.has(id) and bool(defs[id].get("falls", false))
 
 
 func is_block(id: int) -> bool:

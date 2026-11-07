@@ -74,7 +74,8 @@ REGRAS GERAIS DOS ARQUIVOS .txt
   solta-qtd: 1,
   solido: sim,              # não = atravessável
   transparente: nao,        # sim = deixa ver através (como vidro)
-  luz: 13                   # 0-15, ilumina em volta (como tocha)
+  luz: 13,                  # 0-15, ilumina em volta (como tocha)
+  cai: nao                  # sim = cai como areia quando não tem nada embaixo
 
 ----------------------------------------------------------
 4) receitas/minha_receita.txt   (grade 3x3 na bancada)

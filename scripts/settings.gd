@@ -55,7 +55,8 @@ var keys: Dictionary = {}
 var touch_layout: Dictionary = {}
 var look_sens := 1.0
 var touch_look_sens := 1.0
-var render_distance := 4
+var render_distance := 24 # alcance total em chunks (terreno distante simplificado)
+var detail_distance := 6 # chunks com detalhe completo (blocos, colisão)
 var fov := 75.0
 var touch_opacity := 0.6
 var touch_scale := 1.0
@@ -72,7 +73,7 @@ func _ready() -> void:
 	keys = DEFAULT_KEYS.duplicate(true)
 	touch_layout = DEFAULT_TOUCH.duplicate(true)
 	if OS.has_feature("mobile") or OS.has_feature("android") or OS.has_feature("ios"):
-		render_distance = 3
+		detail_distance = 4
 	load_settings()
 	apply_keys()
 
@@ -154,7 +155,8 @@ func save_settings() -> void:
 	c.set_value("s", "touch_layout", touch_layout)
 	c.set_value("s", "look_sens", look_sens)
 	c.set_value("s", "touch_look_sens", touch_look_sens)
-	c.set_value("s", "render_distance", render_distance)
+	c.set_value("s", "far_distance", render_distance)
+	c.set_value("s", "detail_distance", detail_distance)
 	c.set_value("s", "fov", fov)
 	c.set_value("s", "touch_opacity", touch_opacity)
 	c.set_value("s", "touch_scale", touch_scale)
@@ -184,7 +186,8 @@ func load_settings() -> void:
 				touch_layout[id] = t[id]
 	look_sens = c.get_value("s", "look_sens", look_sens)
 	touch_look_sens = c.get_value("s", "touch_look_sens", touch_look_sens)
-	render_distance = c.get_value("s", "render_distance", render_distance)
+	render_distance = clampi(int(c.get_value("s", "far_distance", render_distance)), 2, 24)
+	detail_distance = clampi(int(c.get_value("s", "detail_distance", detail_distance)), 2, 12)
 	fov = c.get_value("s", "fov", fov)
 	touch_opacity = c.get_value("s", "touch_opacity", touch_opacity)
 	touch_scale = c.get_value("s", "touch_scale", touch_scale)

@@ -270,6 +270,8 @@ func _build_craft() -> void:
 		var ids := Blocks.defs.keys()
 		ids.sort()
 		for id in ids:
+			if Blocks.defs[id].has("flow"):
+				continue
 			var b := Button.new()
 			b.custom_minimum_size = Vector2(54, 54)
 			b.icon = Blocks.icon(id)

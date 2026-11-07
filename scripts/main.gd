@@ -43,6 +43,7 @@ var _sky_night := Color(0.015, 0.02, 0.06)
 var _pending_welcome := false
 var _back_ms := 0
 var _open_chest := Vector3i.ZERO
+var dedicated := false # servidor dedicado (sem tela): godot --headless -- --server starcat
 
 
 func _ready() -> void:
@@ -71,6 +72,10 @@ func _ready() -> void:
 	var args := OS.get_cmdline_user_args()
 	if "--autostart" in args:
 		start_test_world("--creative" in args, "--flat" in args, 0)
+	elif "--server" in args:
+		var si := args.find("--server")
+		var sid := String(args[si + 1]) if si + 1 < args.size() else "starcat"
+		start_dedicated(sid)
 	elif "--host" in args:
 		start_test_world(false, false, PORT)
 	elif "--join" in args:
@@ -205,7 +210,7 @@ func start_world_meta(meta: Dictionary) -> void:
 		host_port = PORT
 	if host_port > 0:
 		var peer := ENetMultiplayerPeer.new()
-		var err := peer.create_server(host_port, 8)
+		var err := peer.create_server(host_port, 32 if dedicated else 8)
 		if err != OK:
 			chat_ui.system("Não foi possível abrir a porta %d (erro %d). Jogando offline." % [host_port, err])
 		else:
@@ -225,6 +230,24 @@ func start_world_meta(meta: Dictionary) -> void:
 	if not Mods.warnings.is_empty():
 		chat_ui.system("Mods: %d aviso(s). Primeiro: %s" % [Mods.warnings.size(), String(Mods.warnings[0])])
 	fire_event("player-spawn", {})
+
+
+## Servidor público sem tela. Ex.: godot --headless --path . -- --server starcat
+func start_dedicated(sid: String) -> void:
+	if not sid.begins_with("server_"):
+		sid = "server_" + sid
+	var meta := WorldStore.server_meta(sid)
+	if meta.is_empty():
+		push_error("Servidor desconhecido: " + sid)
+		get_tree().quit(1)
+		return
+	dedicated = true
+	Settings.detail_distance = 3
+	Settings.render_distance = 3
+	start_world_meta(meta)
+	if local_player != null:
+		local_player.creative = true
+	print("[servidor] %s no ar na porta %d" % [String(meta["name"]), int(meta.get("port", PORT))])
 
 
 func start_test_world(creative: bool, flat: bool, host_port: int) -> void:
@@ -279,6 +302,7 @@ func _begin_play() -> void:
 	local_player.set_ui_open(false)
 	touch.set_enabled(Settings.use_touch())
 	_apply_view_distance()
+	world.sim_enabled = true
 	chat_ui.system("Bem-vindo! Modo: %s. Digite /ajuda no chat." % ("Criativo" if creative_mode else "Sobrevivência"))
 
 
@@ -323,7 +347,9 @@ func _cleanup_world() -> void:
 
 
 func _apply_view_distance() -> void:
-	var d := Settings.render_distance * World.CS
+	var far_chunks := maxi(Settings.render_distance, Settings.detail_distance)
+	var d := far_chunks * World.CS
+	world.far_radius = far_chunks if far_chunks > Settings.detail_distance else 0
 	env.fog_density = 2.3 / float(d)
 	local_player.cam.far = float(d) * 1.6 + 40.0
 
@@ -348,7 +374,7 @@ func _process(delta: float) -> void:
 	if not playing or local_player == null:
 		return
 	var pts: Array = [local_player.global_position]
-	var radii: Array = [Settings.render_distance]
+	var radii: Array = [Settings.detail_distance]
 	if online and is_host:
 		for r in remotes.values():
 			pts.append(r.global_position)
@@ -464,12 +490,12 @@ func _update_sky() -> void:
 	col = col.lerp(Color(0.95, 0.5, 0.3), dusk * 0.4 * (1.0 if absf(s) < 0.45 else 0.0))
 	var underwater := false
 	var cp := local_player.cam.global_position
-	underwater = world.get_block(floori(cp.x), floori(cp.y), floori(cp.z)) == Blocks.WATER
+	underwater = Blocks.is_water(world.get_block(floori(cp.x), floori(cp.y), floori(cp.z)))
 	if underwater:
 		col = Color(0.08, 0.2, 0.45).lerp(col, 0.1) * (0.35 + 0.65 * daylight)
 		env.fog_density = 0.12
 	else:
-		env.fog_density = 2.3 / float(Settings.render_distance * World.CS)
+		env.fog_density = 2.3 / float(maxi(Settings.render_distance, Settings.detail_distance) * World.CS)
 	env.background_color = col
 	env.fog_light_color = col
 	world.set_daylight(daylight)
@@ -627,7 +653,7 @@ func _random_ground(base: Vector3, rmin: float, rmax: float) -> Vector3:
 	if not world.is_loaded(wx, wz):
 		return Vector3.INF
 	var y := world.surface_y(wx, wz)
-	if y <= World.SEA - 1 or world.get_block(wx, y, wz) == Blocks.WATER:
+	if y <= World.SEA - 1 or Blocks.is_water(world.get_block(wx, y, wz)):
 		return Vector3.INF
 	return Vector3(wx + 0.5, y + 1.05, wz + 0.5)
 
@@ -724,7 +750,7 @@ func player_place_block(pos: Vector3i, id: int) -> bool:
 func _apply_block(x: int, y: int, z: int, id: int) -> void:
 	var old := world.get_block(x, y, z)
 	world.set_block(x, y, z, id)
-	if id == Blocks.AIR and old != Blocks.AIR and old != Blocks.WATER:
+	if id == Blocks.AIR and old != Blocks.AIR and not Blocks.is_water(old):
 		particles.block_break(Vector3i(x, y, z), old)
 
 
@@ -869,6 +895,8 @@ func send_chat_as(nm: String, text: String) -> void:
 
 # ================================================================ rede
 func net_send_state(pos: Vector3, yaw: float, pitch: float, held: int, swing: bool, sneak: bool) -> void:
+	if dedicated:
+		return # o servidor dedicado não tem avatar
 	if online and multiplayer.multiplayer_peer != null \
 		and multiplayer.multiplayer_peer.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED:
 		r_state.rpc(pos, yaw, pitch, held, swing, sneak)
@@ -960,7 +988,8 @@ func r_rules(new_rules: Dictionary) -> void:
 func r_announce(nm: String) -> void:
 	var sender := multiplayer.get_remote_sender_id()
 	_add_remote(sender, nm)
-	r_announce_reply.rpc_id(sender, Settings.player_name)
+	if not dedicated:
+		r_announce_reply.rpc_id(sender, Settings.player_name)
 
 
 @rpc("any_peer", "reliable")

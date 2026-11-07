@@ -451,6 +451,8 @@ func _load_block(pk: Pack, rel: String, ns: String, mod_name: String) -> void:
 		"stack": 64, "block": true, "icon_tile": tiles[1], "mod": true,
 		"desc": _first(d, ["descricao", "description"], ""),
 	}
+	if _bool(d, "cai", false):
+		def["falls"] = true # cai como areia
 	var light := clampi(int(_num(d, "luz", 0.0)), 0, 15)
 	if light > 0:
 		def["light"] = light

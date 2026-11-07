@@ -6,6 +6,10 @@ var B
 var f := 0
 var ok := true
 
+var _gx := 0
+var _gy := 0
+var _gz := 0
+
 func check(cond: bool, msg: String) -> void:
 	print(("OK   " if cond else "FAIL ") + msg)
 	if not cond:
@@ -93,6 +97,21 @@ func _process(_dt: float) -> void:
 			p.cycle_view()
 			p.cycle_view()
 			check(p.view == 0, "perspectiva volta à 1ª pessoa")
+		445:
+			# água escorrendo e areia caindo (informativo: depende do tempo de cada quadro)
+			var gx := floori(p.global_position.x) + 8
+			var gz := floori(p.global_position.z) + 8
+			_gy = m.world.surface_y(gx, gz)
+			_gx = gx
+			_gz = gz
+			m.world.sim_enabled = true
+			m.world.set_block(gx, _gy + 2, gz, B.WATER)
+			m.world.set_block(gx + 3, _gy + 3, gz, B.SAND)
+		495:
+			print("INFO água desceu: ", B.is_water(m.world.get_block(_gx, _gy + 1, _gz)),
+				" | água espalhou: ", B.is_water(m.world.get_block(_gx + 1, _gy + 1, _gz)),
+				" | areia pousou: ", m.world.get_block(_gx + 3, _gy + 1, _gz) == B.SAND)
+			check(m.world.far_radius >= 0, "far_radius definido")
 		450:
 			var before := 0
 			m.world.explode(p.global_position + Vector3(4, -1, 0), 3.0)

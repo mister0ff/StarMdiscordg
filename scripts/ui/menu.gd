@@ -1,5 +1,5 @@
 extends Control
-## Menus: inicial (Jogar / Opções), Jogar (Mundos / Servidores / Realms), criar/editar mundo,
+## Menus: inicial (Jogar / Opções), Jogar (Mundos / Servidores), criar/editar mundo,
 ## mods, pausa e configurações (geral, teclas, toque).
 
 const BG := Color(0.06, 0.09, 0.16, 1)
@@ -19,7 +19,7 @@ var _listen_btn: Button
 var _ignore_frame := -1
 var _back: Callable = Callable()
 var _settings_back := "main"
-var _tab := 0 # 0 mundos, 1 servidores, 2 realms
+var _tab := 0 # 0 mundos, 1 servidores
 var _world_page := 0
 
 
@@ -278,8 +278,8 @@ func _page_play() -> void:
 	tabs.add_theme_constant_override("separation", 8)
 	_page.add_child(tabs)
 	var group := ButtonGroup.new()
-	var names := ["Mundos", "Servidores", "Realms"]
-	for i in 3:
+	var names := ["Mundos", "Servidores"]
+	for i in 2:
 		var b := Button.new()
 		b.text = names[i]
 		b.toggle_mode = true
@@ -294,10 +294,8 @@ func _page_play() -> void:
 	match _tab:
 		0:
 			_tab_worlds()
-		1:
-			_tab_servers()
 		_:
-			_tab_realms()
+			_tab_servers()
 	_btn("Voltar", show_main)
 
 
@@ -379,6 +377,17 @@ func _world_card(meta: Dictionary) -> Control:
 	return card
 
 
+## Servidor público: entra no endereço configurado (todos os jogadores caem no mesmo mundo).
+## Sem endereço configurado, abre o servidor localmente (modo de teste/anfitrião).
+func _play_server(sd: Dictionary) -> void:
+	var ad: Array = WorldStore.server_address(String(sd["id"]))
+	if String(ad[0]) != "":
+		main.join_server(String(ad[0]), int(ad[1]))
+		return
+	toast("Sem endereço público (servers.cfg): abrindo em modo local.")
+	main.start_world_meta(WorldStore.server_meta(String(sd["id"])))
+
+
 func _tab_servers() -> void:
 	var sc := ScrollContainer.new()
 	sc.custom_minimum_size = Vector2(0, 340)
@@ -427,7 +436,7 @@ func _server_card(sd: Dictionary) -> Control:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 6)
 	vb.add_child(row)
-	var pb := _btn("Jogar", func(): main.start_world_meta(WorldStore.server_meta(String(sd["id"]))), row)
+	var pb := _btn("Jogar", func(): _play_server(sd), row)
 	pb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var is_admin := Settings.is_admin_name(Settings.player_name)
 	var eb := _btn("Editar", func(): _page_edit(WorldStore.server_meta(String(sd["id"]))), row)
@@ -439,13 +448,6 @@ func _server_card(sd: Dictionary) -> Control:
 		hint.add_theme_font_size_override("font_size", 13)
 		hint.modulate = Color(1, 1, 1, 0.5)
 	return card
-
-
-func _tab_realms() -> void:
-	var l := _label("Realms — em breve!\nAqui ficarão os mundos online hospedados para você e seus amigos.")
-	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	l.custom_minimum_size = Vector2(0, 200)
-	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 
 
 func _page_ip() -> void:
@@ -818,7 +820,13 @@ func _tab_general(vb: VBoxContainer) -> void:
 	_slider(vb, "Sensibilidade mouse", 0.2, 3.0, 0.05, Settings.look_sens, func(x): Settings.look_sens = x)
 	_slider(vb, "Sensibilidade toque", 0.2, 3.0, 0.05, Settings.touch_look_sens, func(x): Settings.touch_look_sens = x)
 	_slider(vb, "Campo de visão", 50.0, 110.0, 1.0, Settings.fov, func(x): Settings.fov = x)
-	_slider(vb, "Distância (chunks)", 2.0, 10.0, 1.0, Settings.render_distance, func(x): Settings.render_distance = int(x))
+	_slider(vb, "Alcance total (chunks)", 4.0, 24.0, 1.0, Settings.render_distance, func(x): Settings.render_distance = int(x))
+	_slider(vb, "Detalhe completo (chunks)", 2.0, 12.0, 1.0, Settings.detail_distance, func(x): Settings.detail_distance = int(x))
+	var hint2 := Label.new()
+	hint2.text = "Além do detalhe completo, o terreno aparece simplificado (baixa qualidade) até o alcance total."
+	hint2.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	hint2.add_theme_font_size_override("font_size", 14)
+	vb.add_child(hint2)
 	var fps := CheckBox.new()
 	fps.text = "Mostrar FPS e coordenadas"
 	fps.button_pressed = Settings.show_fps

@@ -50,6 +50,20 @@ static func mods_dir(id: String) -> String:
 	return dir_of(id) + "/mods"
 
 
+## [endereço, porta] do servidor público. Vazio = ainda não configurado.
+## Edite res://servers.cfg (ou user://servers.cfg) com o IP/domínio da máquina que roda o servidor.
+static func server_address(sid: String) -> Array:
+	var def := server_def(sid)
+	var addr := String(def.get("address", ""))
+	var port := int(def.get("port", 25565))
+	for path in ["res://servers.cfg", "user://servers.cfg"]:
+		var cf := ConfigFile.new()
+		if cf.load(path) == OK and cf.has_section(sid):
+			addr = String(cf.get_value(sid, "address", addr))
+			port = int(cf.get_value(sid, "port", port))
+	return [addr.strip_edges(), port]
+
+
 static func server_def(sid: String) -> Dictionary:
 	for s in SERVERS:
 		if s["id"] == sid:

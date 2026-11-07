@@ -294,7 +294,7 @@ func _physics_process(delta: float) -> void:
 	if face.length() > 0.05:
 		var ty := atan2(-face.x, -face.z)
 		_model.rotation.y = lerp_angle(_model.rotation.y, ty, clampf(delta * 8.0, 0.0, 1.0))
-	var in_water := world.get_block(floori(global_position.x), floori(global_position.y + 0.3), floori(global_position.z)) == Blocks.WATER
+	var in_water := Blocks.is_water(world.get_block(floori(global_position.x), floori(global_position.y + 0.3), floori(global_position.z)))
 	var accel := 20.0 if _kb <= 0.0 else 2.0
 	velocity.x = move_toward(velocity.x, want.x, accel * delta)
 	velocity.z = move_toward(velocity.z, want.z, accel * delta)

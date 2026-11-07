@@ -34,6 +34,21 @@ void fragment() {
 }
 """
 
+const FAR_SHADER := """
+shader_type spatial;
+render_mode unshaded, cull_disabled;
+uniform float daylight = 1.0;
+uniform vec3 tint = vec3(1.0);
+void fragment() {
+	float l = mix(0.14, 1.0, daylight);
+	ALBEDO = COLOR.rgb * l * mix(vec3(0.75, 0.8, 1.0), tint, daylight);
+}
+"""
+const FAR_TILE := 4 # chunks por lado de cada "pedaço" de terreno distante
+const FAR_STEP := 4 # blocos entre amostras do terreno distante (baixa qualidade)
+const COLLIDER_RADIUS := 3 # só chunks perto do jogador têm colisão
+const PHYS_TICK := 0.18
+
 const FACE_N := [Vector3i(1, 0, 0), Vector3i(-1, 0, 0), Vector3i(0, 1, 0), Vector3i(0, -1, 0), Vector3i(0, 0, 1), Vector3i(0, 0, -1)]
 const FACE_V := [
 	[Vector3(1, 0, 1), Vector3(1, 1, 1), Vector3(1, 1, 0), Vector3(1, 0, 0)],
@@ -62,6 +77,7 @@ class Chunk:
 	var cshape: CollisionShape3D
 	var meshed := false
 	var top := 0
+	var col_faces := PackedVector3Array()
 
 
 var seed_val := 0
@@ -83,9 +99,21 @@ var _noise_c := FastNoiseLite.new()
 var _opaque := PackedByteArray()
 var _solid := PackedByteArray()
 var _known := PackedByteArray()
+var _wl := PackedByteArray() # nível de água por id (0 = não é água, 8 = fonte)
 var _face_uv := PackedVector2Array()
 var _uv_size := Vector2.ZERO
 var daylight := 1.0
+var sim_enabled := false # água/areia só reagem depois que o jogo começou
+var far_radius := 0 # raio (em chunks) do terreno distante simplificado; 0 = desligado
+var far_tiles: Dictionary = {} # Vector2i -> {"node": MeshInstance3D, "mask": int}
+var _far_dirty: Dictionary = {}
+var _far_info: Dictionary = {} # Vector2i(amostra) -> [altura, cor]
+var _far_cc := Vector2i.ZERO
+var _last_key := ""
+var _mat_far: ShaderMaterial
+var _phys: Dictionary = {} # Vector3i -> true: células para reavaliar (água/areia)
+var _phys_t := 0.0
+var _fallers: Array = []
 
 
 func _ready() -> void:
@@ -97,6 +125,10 @@ func _ready() -> void:
 	sw.code = WATER_SHADER
 	_mat_water = ShaderMaterial.new()
 	_mat_water.shader = sw
+	var sf := Shader.new()
+	sf.code = FAR_SHADER
+	_mat_far = ShaderMaterial.new()
+	_mat_far.shader = sf
 	refresh_tables()
 
 
@@ -105,6 +137,8 @@ func refresh_tables() -> void:
 	_opaque.resize(256)
 	_solid.resize(256)
 	_known.resize(256)
+	_wl.resize(256)
+	_wl.fill(0)
 	_opaque.fill(0)
 	_solid.fill(0)
 	_known.fill(0)
@@ -114,6 +148,7 @@ func refresh_tables() -> void:
 		if id <= 0 or id > 255 or not bool(Blocks.defs[id]["block"]):
 			continue
 		_known[id] = 1
+		_wl[id] = Blocks.water_level(id)
 		_opaque[id] = 1 if Blocks.is_opaque(id) else 0
 		_solid[id] = 1 if Blocks.is_solid(id) else 0
 		var tiles: Array = Blocks.defs[id]["tiles"]
@@ -152,6 +187,16 @@ func clear_world() -> void:
 	chunks.clear()
 	_gen_queue.clear()
 	_dirty.clear()
+	_far_clear()
+	_far_info.clear()
+	_far_dirty.clear()
+	_last_key = ""
+	sim_enabled = false
+	_phys.clear()
+	for f in _fallers:
+		if is_instance_valid(f):
+			f.queue_free()
+	_fallers.clear()
 	edits.clear()
 	lights.clear()
 	chests.clear()
@@ -165,6 +210,8 @@ func set_daylight(v: float) -> void:
 	if v < 0.6 and v > 0.2:
 		warm = Vector3(1.0, 0.8, 0.65)
 	_mat_solid.set_shader_parameter("tint", warm)
+	_mat_far.set_shader_parameter("daylight", v)
+	_mat_far.set_shader_parameter("tint", warm)
 
 
 # ------------------------------------------------------------ ruído e terreno
@@ -279,6 +326,7 @@ func _gen_chunk(pos: Vector2i) -> void:
 			top = maxi(top, k / (CS * CS) + 1)
 	c.top = mini(CH, top + 1)
 	c.node = MeshInstance3D.new()
+	c.node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	c.node.position = Vector3(ox, 0, oz)
 	c.body = StaticBody3D.new()
 	c.cshape = CollisionShape3D.new()
@@ -326,6 +374,8 @@ func set_block(wx: int, y: int, wz: int, id: int, immediate := true) -> bool:
 		edits[cp] = {}
 	edits[cp][i] = id
 	var light_changed := _update_light(Vector3i(wx, y, wz), id)
+	if sim_enabled:
+		_queue_phys(Vector3i(wx, y, wz))
 	var c: Chunk = chunks.get(cp)
 	if c == null:
 		return true
@@ -426,7 +476,7 @@ func clear_edits_lights() -> void:
 func surface_y(wx: int, wz: int) -> int:
 	for y in range(CH - 1, -1, -1):
 		var id := get_block(wx, y, wz)
-		if id != Blocks.AIR and id != Blocks.WATER and id != Blocks.LEAVES:
+		if id != Blocks.AIR and not Blocks.is_water(id) and id != Blocks.LEAVES:
 			return y
 	return 0
 
@@ -454,7 +504,7 @@ func explode(center: Vector3, radius: float) -> void:
 				if dx * dx + dy * dy + dz * dz > radius * radius:
 					continue
 				var id := get_block(cx + dx, cy + dy, cz + dz)
-				if id != Blocks.AIR and id != Blocks.BEDROCK and id != Blocks.WATER:
+				if id != Blocks.AIR and id != Blocks.BEDROCK and not Blocks.is_water(id):
 					set_block(cx + dx, cy + dy, cz + dz, Blocks.AIR)
 
 
@@ -483,7 +533,7 @@ func raycast(origin: Vector3, dir: Vector3, max_dist: float) -> Dictionary:
 	var t := 0.0
 	while t <= max_dist:
 		var id := get_block(x, y, z)
-		if id != Blocks.AIR and id != Blocks.WATER:
+		if id != Blocks.AIR and not Blocks.is_water(id):
 			return {"pos": Vector3i(x, y, z), "normal": n, "id": id, "t": t}
 		if tmx < tmy and tmx < tmz:
 			x += sx
@@ -507,6 +557,13 @@ func raycast(origin: Vector3, dir: Vector3, max_dist: float) -> Dictionary:
 func set_centers(pts: Array, radii: Array) -> void:
 	centers = pts
 	center_radius = radii
+	var key := str(far_radius)
+	for k in pts.size():
+		var kp: Vector3 = pts[k]
+		key += "|%d,%d,%d" % [floori(kp.x / CS), floori(kp.z / CS), int(radii[k])]
+	if key == _last_key:
+		return # ninguém mudou de chunk: nada a recalcular
+	_last_key = key
 	var need: Dictionary = {}
 	for k in pts.size():
 		var p: Vector3 = pts[k]
@@ -540,17 +597,29 @@ func set_centers(pts: Array, radii: Array) -> void:
 		chunks[q].node.queue_free()
 		chunks.erase(q)
 		_dirty.erase(q)
+	if far_radius > 0 and not pts.is_empty():
+		var p0: Vector3 = pts[0]
+		_far_cc = Vector2i(floori(p0.x / CS), floori(p0.z / CS))
+		_far_refresh()
+	elif not far_tiles.is_empty():
+		_far_clear()
+	_update_colliders()
 
 
 func pending_work() -> int:
-	return _gen_queue.size() + _dirty.size()
+	return _gen_queue.size() + _dirty.size() + _far_dirty.size()
 
 
-func _process(_dt: float) -> void:
+func _process(dt: float) -> void:
 	var t0 := Time.get_ticks_usec()
 	while Time.get_ticks_usec() - t0 < 7000:
 		if not _step():
 			break
+	if sim_enabled and not _phys.is_empty():
+		_phys_t += dt
+		if _phys_t >= PHYS_TICK:
+			_phys_t = 0.0
+			_run_phys()
 
 
 func _step() -> bool:
@@ -574,7 +643,330 @@ func _step() -> bool:
 		if chunks.has(best):
 			_build_mesh(chunks[best])
 		return true
+	if not _far_dirty.is_empty():
+		var bt = null
+		var btd := INF
+		for t in _far_dirty:
+			var tv: Vector2i = t
+			var dd := Vector2(tv.x * FAR_TILE + 2 - _far_cc.x, tv.y * FAR_TILE + 2 - _far_cc.y).length_squared()
+			if dd < btd:
+				btd = dd
+				bt = tv
+		_far_dirty.erase(bt)
+		_far_build(bt)
+		return true
 	return false
+
+
+# ------------------------------------------------------------ colisão só perto dos jogadores
+func _chunk_near(q: Vector2i) -> bool:
+	for p in centers:
+		var pv: Vector3 = p
+		var dx := q.x - floori(pv.x / CS)
+		var dz := q.y - floori(pv.z / CS)
+		if dx * dx + dz * dz <= COLLIDER_RADIUS * COLLIDER_RADIUS:
+			return true
+	return false
+
+
+func _apply_collider(c: Chunk) -> void:
+	if c.col_faces.size() > 0 and _chunk_near(c.pos):
+		var shp := ConcavePolygonShape3D.new()
+		shp.set_faces(c.col_faces)
+		c.cshape.shape = shp
+	else:
+		c.cshape.shape = null
+
+
+func _update_colliders() -> void:
+	for q in chunks:
+		var c: Chunk = chunks[q]
+		if not c.meshed:
+			continue
+		var near := _chunk_near(q)
+		var has_shape := c.cshape.shape != null
+		if near != has_shape:
+			_apply_collider(c)
+
+
+# ------------------------------------------------------------ terreno distante (LOD barato)
+func _tile_of(q: Vector2i) -> Vector2i:
+	return Vector2i(floori(q.x / float(FAR_TILE)), floori(q.y / float(FAR_TILE)))
+
+
+func _far_wanted(q: Vector2i) -> bool:
+	var d := q - _far_cc
+	if d.x * d.x + d.y * d.y > far_radius * far_radius:
+		return false
+	if chunks.has(q) and (chunks[q] as Chunk).meshed:
+		return false
+	return true
+
+
+func _far_mask(tile: Vector2i) -> int:
+	var m := 0
+	for i in FAR_TILE * FAR_TILE:
+		var q := Vector2i(tile.x * FAR_TILE + (i % FAR_TILE), tile.y * FAR_TILE + (i / FAR_TILE))
+		if _far_wanted(q):
+			m |= (1 << i)
+	return m
+
+
+func _far_refresh() -> void:
+	var t0 := _tile_of(_far_cc - Vector2i(far_radius, far_radius))
+	var t1 := _tile_of(_far_cc + Vector2i(far_radius, far_radius))
+	var keep: Dictionary = {}
+	for tx in range(t0.x, t1.x + 1):
+		for tz in range(t0.y, t1.y + 1):
+			var t := Vector2i(tx, tz)
+			var m := _far_mask(t)
+			if m == 0:
+				continue
+			keep[t] = true
+			if not far_tiles.has(t) or int(far_tiles[t]["mask"]) != m:
+				_far_dirty[t] = true
+	for t in far_tiles.keys():
+		if not keep.has(t):
+			_far_free(t)
+	for t in _far_dirty.keys():
+		if not keep.has(t):
+			_far_dirty.erase(t)
+
+
+func _far_free(t: Vector2i) -> void:
+	if far_tiles.has(t):
+		(far_tiles[t]["node"] as Node).queue_free()
+		far_tiles.erase(t)
+
+
+func _far_clear() -> void:
+	for t in far_tiles.keys():
+		_far_free(t)
+	_far_dirty.clear()
+
+
+func _far_color(surf: int) -> Color:
+	match surf:
+		Blocks.GRASS:
+			return Color(0.36, 0.62, 0.25)
+		Blocks.SAND:
+			return Color(0.85, 0.8, 0.55)
+		Blocks.SNOW:
+			return Color(0.95, 0.97, 1.0)
+	return Blocks.avg_color(surf)
+
+
+func _far_sample(gx: int, gz: int) -> Array:
+	var key := Vector2i(gx, gz)
+	if _far_info.has(key):
+		return _far_info[key]
+	var wx := gx * FAR_STEP
+	var wz := gz * FAR_STEP
+	var h := height_at(wx, wz)
+	var y := float(h) + 1.0
+	var col := _far_color(_surface_block(wx, wz, h))
+	if h < SEA:
+		y = SEA + 0.9
+		col = Color(0.16, 0.32, 0.72)
+	var r: Array = [y, col]
+	_far_info[key] = r
+	return r
+
+
+func _far_build(t: Vector2i) -> void:
+	var m := _far_mask(t)
+	if m == 0:
+		_far_free(t)
+		return
+	var verts := PackedVector3Array()
+	var cols := PackedColorArray()
+	var idx := PackedInt32Array()
+	var cells := CS / FAR_STEP
+	for i in FAR_TILE * FAR_TILE:
+		if (m & (1 << i)) == 0:
+			continue
+		var q := Vector2i(t.x * FAR_TILE + (i % FAR_TILE), t.y * FAR_TILE + (i / FAR_TILE))
+		var gx0 := q.x * cells
+		var gz0 := q.y * cells
+		for cz in cells:
+			for cx in cells:
+				var a := _far_sample(gx0 + cx, gz0 + cz)
+				var b := _far_sample(gx0 + cx + 1, gz0 + cz)
+				var c := _far_sample(gx0 + cx + 1, gz0 + cz + 1)
+				var d := _far_sample(gx0 + cx, gz0 + cz + 1)
+				var base := verts.size()
+				var x0 := float((gx0 + cx) * FAR_STEP)
+				var z0 := float((gz0 + cz) * FAR_STEP)
+				var x1 := x0 + FAR_STEP
+				var z1 := z0 + FAR_STEP
+				verts.append(Vector3(x0, a[0], z0))
+				verts.append(Vector3(x1, b[0], z0))
+				verts.append(Vector3(x1, c[0], z1))
+				verts.append(Vector3(x0, d[0], z1))
+				cols.append(a[1])
+				cols.append(b[1])
+				cols.append(c[1])
+				cols.append(d[1])
+				idx.append_array([base, base + 1, base + 2, base, base + 2, base + 3])
+	var mesh := ArrayMesh.new()
+	var arr := []
+	arr.resize(Mesh.ARRAY_MAX)
+	arr[Mesh.ARRAY_VERTEX] = verts
+	arr[Mesh.ARRAY_COLOR] = cols
+	arr[Mesh.ARRAY_INDEX] = idx
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
+	mesh.surface_set_material(0, _mat_far)
+	if far_tiles.has(t):
+		(far_tiles[t]["node"] as MeshInstance3D).mesh = mesh
+		far_tiles[t]["mask"] = m
+	else:
+		var n := MeshInstance3D.new()
+		n.mesh = mesh
+		n.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		add_child(n)
+		far_tiles[t] = {"node": n, "mask": m}
+
+
+# ------------------------------------------------------------ água e areia (simulação)
+func _queue_phys(p: Vector3i) -> void:
+	if _phys.size() > 6000:
+		return
+	_phys[p] = true
+	_phys[p + Vector3i(1, 0, 0)] = true
+	_phys[p + Vector3i(-1, 0, 0)] = true
+	_phys[p + Vector3i(0, 1, 0)] = true
+	_phys[p + Vector3i(0, -1, 0)] = true
+	_phys[p + Vector3i(0, 0, 1)] = true
+	_phys[p + Vector3i(0, 0, -1)] = true
+
+
+func _cell_loaded(x: int, z: int) -> bool:
+	return chunks.has(Vector2i(floori(x / float(CS)), floori(z / float(CS))))
+
+
+func _run_phys() -> void:
+	var batch: Array = []
+	for k in _phys:
+		batch.append(k)
+		if batch.size() >= 120:
+			break
+	for k in batch:
+		_phys.erase(k)
+	for k in batch:
+		_phys_cell(k)
+
+
+func _phys_cell(p: Vector3i) -> void:
+	if p.y < 1 or p.y >= CH or not _cell_loaded(p.x, p.z):
+		return
+	var id := get_block(p.x, p.y, p.z)
+	if Blocks.falls(id):
+		var below := get_block(p.x, p.y - 1, p.z)
+		if below == Blocks.AIR or Blocks.is_water(below) or below == Blocks.TORCH:
+			if p.y - 1 >= 1 and _cell_loaded(p.x, p.z):
+				_start_fall(p, id)
+		return
+	var wl := Blocks.water_level(id)
+	if wl == 0:
+		return
+	if wl < 8:
+		var want := _expected_flow(p)
+		if want == 0:
+			set_block(p.x, p.y, p.z, Blocks.AIR, false)
+			return
+		if want != wl:
+			set_block(p.x, p.y, p.z, Blocks.WATER_F1 + want - 1, false)
+			return
+	_spread_water(p, wl)
+
+
+func _can_spread_from(x: int, y: int, z: int) -> bool:
+	## água só se espalha para os lados quando embaixo tem chão — ou água, desde que ela não seja uma queda
+	if y <= 0:
+		return true
+	var b := get_block(x, y - 1, z)
+	if b == Blocks.AIR or b == Blocks.TORCH:
+		return false
+	if Blocks.is_water(b):
+		return not Blocks.is_water(get_block(x, y + 1, z))
+	return true
+
+
+func _expected_flow(p: Vector3i) -> int:
+	var above := get_block(p.x, p.y + 1, p.z)
+	if Blocks.is_water(above):
+		return 7
+	var best := 0
+	for d in [Vector3i(1, 0, 0), Vector3i(-1, 0, 0), Vector3i(0, 0, 1), Vector3i(0, 0, -1)]:
+		var n: Vector3i = p + d
+		var nl := Blocks.water_level(get_block(n.x, n.y, n.z))
+		if nl > 1 and _can_spread_from(n.x, n.y, n.z):
+			best = maxi(best, nl - 1)
+	return mini(best, 7)
+
+
+func _spread_water(p: Vector3i, wl: int) -> void:
+	var below := get_block(p.x, p.y - 1, p.z)
+	var bl := Blocks.water_level(below)
+	if p.y > 1 and (below == Blocks.AIR or below == Blocks.TORCH or (bl > 0 and bl < 7)):
+		if bl != 8:
+			set_block(p.x, p.y - 1, p.z, Blocks.WATER_F7, false)
+		return
+	if not _can_spread_from(p.x, p.y, p.z) or wl <= 1:
+		return
+	var nlvl := mini(wl - 1, 7)
+	for d in [Vector3i(1, 0, 0), Vector3i(-1, 0, 0), Vector3i(0, 0, 1), Vector3i(0, 0, -1)]:
+		var n: Vector3i = p + d
+		if not _cell_loaded(n.x, n.z):
+			continue
+		var nid := get_block(n.x, n.y, n.z)
+		var cur := Blocks.water_level(nid)
+		if nid == Blocks.AIR or nid == Blocks.TORCH or (cur > 0 and cur < nlvl):
+			set_block(n.x, n.y, n.z, Blocks.WATER_F1 + nlvl - 1, false)
+
+
+func _start_fall(p: Vector3i, id: int) -> void:
+	set_block(p.x, p.y, p.z, Blocks.AIR, false)
+	var fb := FallingBlock.new()
+	fb.world = self
+	fb.block_id = id
+	fb.position = Vector3(p.x + 0.5, p.y + 0.5, p.z + 0.5)
+	add_child(fb)
+	_fallers.append(fb)
+
+
+## Cubo (centralizado na origem) com a textura do bloco — usado pelo bloco em queda.
+func make_block_mesh(id: int) -> ArrayMesh:
+	var verts := PackedVector3Array()
+	var uvs := PackedVector2Array()
+	var cols := PackedColorArray()
+	var idx := PackedInt32Array()
+	var e := 0.0006
+	var su := _uv_size.x - 2.0 * e
+	var sv := _uv_size.y - 2.0 * e
+	for f in 6:
+		var fv: Array = FACE_V[f]
+		var fu: Array = FACE_UV[f]
+		var base_uv: Vector2 = _face_uv[id * 6 + f]
+		var shade: float = FACE_SHADE[f]
+		var b := verts.size()
+		for k in 4:
+			var v: Vector3 = fv[k]
+			verts.append(v - Vector3(0.5, 0.5, 0.5))
+			var lu: Vector2 = fu[k]
+			uvs.append(base_uv + Vector2(e + lu.x * su, e + lu.y * sv))
+			cols.append(Color(shade, shade, shade, 0.0))
+		idx.append_array([b, b + 1, b + 2, b, b + 2, b + 3])
+	var mesh := ArrayMesh.new()
+	var arr := []
+	arr.resize(Mesh.ARRAY_MAX)
+	arr[Mesh.ARRAY_VERTEX] = verts
+	arr[Mesh.ARRAY_TEX_UV] = uvs
+	arr[Mesh.ARRAY_COLOR] = cols
+	arr[Mesh.ARRAY_INDEX] = idx
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
+	mesh.surface_set_material(0, _mat_solid)
+	return mesh
 
 
 # ------------------------------------------------------------ malha
@@ -609,11 +1001,18 @@ func _build_mesh(c: Chunk) -> void:
 				if id == Blocks.TORCH:
 					_add_torch(x, y, z, _face_uv[id * 6 + 1], verts, uvs, cols, idx)
 					continue
-				var is_water := id == Blocks.WATER
+				var wl: int = _wl[id]
+				var is_water := wl > 0
 				var lower_top := false
+				var top_h := 0.9
 				if is_water:
 					var above := 0 if y + 1 >= CH else bl[x + z * CS + (y + 1) * CS * CS]
-					lower_top = above != Blocks.WATER
+					var above_water: bool = above != 0 and _wl[above] > 0
+					lower_top = not above_water
+					if above_water:
+						wl = 8
+					elif wl < 8:
+						top_h = 0.12 + float(wl) * 0.1
 				for f in 6:
 					var n: Vector3i = FACE_N[f]
 					var nx := x + n.x
@@ -630,7 +1029,9 @@ func _build_mesh(c: Chunk) -> void:
 						nid = get_block(ox + nx, ny, oz + nz)
 					var vis := false
 					if is_water:
-						vis = nid == 0 or (_opaque[nid] == 0 and nid != Blocks.WATER)
+						vis = nid == 0 or (_opaque[nid] == 0 and _wl[nid] == 0)
+						if not vis and _wl[nid] > 0 and f != 2 and f != 3 and wl > int(_wl[nid]):
+							vis = true # lado de água mais alta ao lado de água mais baixa
 					else:
 						vis = _opaque[nid] == 0 and not (nid == id and id == Blocks.GLASS)
 					var colf: bool = _solid[id] == 1 and _solid[nid] == 0
@@ -648,7 +1049,7 @@ func _build_mesh(c: Chunk) -> void:
 								var v: Vector3 = fv[k]
 								var py := v.y
 								if lower_top and py > 0.5:
-									py = 0.9
+									py = top_h
 								wverts.append(Vector3(x + v.x, y + py, z + v.z))
 								var lu: Vector2 = fu[k]
 								wuvs.append(base_uv + Vector2(e + lu.x * su, e + lu.y * sv))
@@ -695,12 +1096,12 @@ func _build_mesh(c: Chunk) -> void:
 		mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr2)
 		mesh.surface_set_material(si, _mat_water)
 	c.node.mesh = mesh
-	if col_faces.size() > 0:
-		var shp := ConcavePolygonShape3D.new()
-		shp.set_faces(col_faces)
-		c.cshape.shape = shp
-	else:
-		c.cshape.shape = null
+	c.col_faces = col_faces
+	_apply_collider(c)
+	if not c.meshed:
+		c.meshed = true
+		if far_radius > 0:
+			_far_dirty[_tile_of(c.pos)] = true
 	c.meshed = true
 
 

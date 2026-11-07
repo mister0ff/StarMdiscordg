@@ -258,8 +258,8 @@ func _physics_process(delta: float) -> void:
 	var pos := global_position
 	var feet_id := world.get_block(floori(pos.x), floori(pos.y + 0.2), floori(pos.z))
 	var head_id := world.get_block(floori(pos.x), floori(pos.y + EYE), floori(pos.z))
-	_in_water = feet_id == Blocks.WATER
-	var head_water := head_id == Blocks.WATER
+	_in_water = Blocks.is_water(feet_id)
+	var head_water := Blocks.is_water(head_id)
 
 	var iv := Vector2.ZERO
 	var jump := false
@@ -548,7 +548,7 @@ func _do_place(held: int) -> void:
 		return
 	var np: Vector3i = target["pos"] + target["normal"]
 	var cur := world.get_block(np.x, np.y, np.z)
-	if cur != Blocks.AIR and cur != Blocks.WATER:
+	if cur != Blocks.AIR and not Blocks.is_water(cur):
 		return
 	if np.y < 0 or np.y >= World.CH:
 		return

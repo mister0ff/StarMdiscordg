@@ -45,7 +45,7 @@ Quem hospeda: *Multijogador → Hospedar* (porta padrão 25565 UDP; libere no ro
 
 
 ## Novidades (esta versão)
-- Tela inicial: **Jogar / Opções** → Jogar tem **Mundos** (grade 3x3 com páginas `<` `>`), **Servidores** (Starcat Mc, Auralis Net) e **Realms**.
+- Tela inicial: **Jogar / Opções** → Jogar tem **Mundos** (grade 3x3 com páginas `<` `>`), **Servidores** (Starcat Mc, Auralis Net) (o Realms foi removido).
 - Criar/editar mundo: modelos **Normal** e **Plano**, regras (Comandos, Sempre dia, Spawn de mobs, PvP…), apagar mundo, **Mods**.
 - Admin de servidor: apenas o nick **X EDUHH X** edita/usa comandos nos servidores.
 - Perspectivas (F5 ou botão "Cam"): 1ª pessoa (mão visível), 3ª pessoa (atrás) e 2ª pessoa (frente).
@@ -56,3 +56,9 @@ Quem hospeda: *Multijogador → Hospedar* (porta padrão 25565 UDP; libere no ro
 - Dia/noite mais lento (30 min). Ajuste em `scripts/main.gd` (`DAY_LEN`).
 - Sistema de mods `.stc` — veja **mods.txt** e o exemplo `mods_teste.stc` / `exemplo_mod_fonte/`.
 - Imagens dos servidores: coloque em `assets/servers/server_starcat_banner.jpg` etc. para embutir (senão baixa da internet).
+
+## Otimização, água/areia e servidor público
+- **Alcance de 24 chunks**: até 6 chunks (4 no celular) com blocos e colisão completos; além disso o terreno aparece **simplificado** (malha leve de baixa qualidade, agrupada em pedaços) até o alcance total. Ajuste em Opções > Geral ("Alcance total" e "Detalhe completo").
+- Colisão só nos chunks perto do jogador; chunks só recalculam quando você muda de chunk; faces escondidas não são desenhadas (e o Godot já descarta o que está fora da tela).
+- **Água** escorre (cai, espalha até 7 blocos e seca quando a fonte some) e **areia/cascalho** caem como blocos em queda. Mods: `cai: sim` num bloco.
+- **Servidor público único**: rode `godot --headless --path . -- --server starcat` (ou `auralis`) numa máquina com a porta UDP aberta e ponha o IP/domínio em `servers.cfg`. Quem tocar em "Jogar" no servidor entra nesse mesmo mundo e vê os outros jogadores. Sem endereço configurado o jogo abre o servidor em modo local (teste).

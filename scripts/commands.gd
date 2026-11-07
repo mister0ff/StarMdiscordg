@@ -215,6 +215,8 @@ func _items(args: Array) -> void:
 	var s := ""
 	for k in ids:
 		var id: int = k
+		if Blocks.defs[id].has("flow"):
+			continue
 		var sid := Blocks.string_of(id)
 		var nm := Blocks.name_of(id)
 		if filt != "" and not sid.contains(filt) and not nm.to_lower().contains(filt):

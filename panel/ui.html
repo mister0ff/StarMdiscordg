@@ -1,0 +1,629 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0e1512">
+<title>Bedrock Host</title>
+<style>
+:root{
+  --bg:#0e1512; --panel:#16201b; --panel2:#1d2a23; --line:#2a3a32; --txt:#e6efe9; --mut:#8fa69a;
+  --acc:#3ddc84; --acc2:#1fa65e; --warn:#ffb54a; --bad:#ff6b6b; --blue:#59b7ff;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;background:var(--bg);color:var(--txt);font:15px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+body{padding-bottom:calc(70px + env(safe-area-inset-bottom))}
+h2{font-size:15px;margin:0 0 10px;letter-spacing:.02em}
+h3{font-size:13px;margin:14px 0 6px;color:var(--mut);text-transform:uppercase;letter-spacing:.06em}
+button,input,select,textarea{font:inherit;color:inherit}
+header{position:sticky;top:0;z-index:5;background:rgba(14,21,18,.96);backdrop-filter:blur(6px);border-bottom:1px solid var(--line);
+  display:flex;align-items:center;gap:10px;padding:10px 14px;padding-top:calc(10px + env(safe-area-inset-top))}
+header .logo{font-weight:700}
+header .sp{flex:1}
+.pill{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:99px;font-size:12px;font-weight:600;background:var(--panel2);border:1px solid var(--line)}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--mut)}
+.s-running .dot{background:var(--acc);box-shadow:0 0 8px var(--acc)} .s-running{color:var(--acc)}
+.s-starting .dot,.s-stopping .dot{background:var(--warn)} .s-starting,.s-stopping{color:var(--warn)}
+.s-crashed .dot{background:var(--bad)} .s-crashed{color:var(--bad)}
+main{max-width:860px;margin:0 auto;padding:12px 12px 20px}
+.tab{display:none}.tab.on{display:block}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:12px}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px}
+.kv{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:9px 11px}
+.kv b{display:block;font-size:17px}.kv span{font-size:12px;color:var(--mut)}
+.btn{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:9px 14px;cursor:pointer;font-weight:600}
+.btn:active{transform:scale(.98)}
+.btn.pri{background:var(--acc);border-color:var(--acc);color:#04210f}
+.btn.bad{background:#3a1c1c;border-color:#6b2b2b;color:#ffb3b3}
+.btn.sm{padding:5px 10px;font-size:13px;border-radius:8px}
+.btn[disabled]{opacity:.4;pointer-events:none}
+input[type=text],input[type=password],input[type=number],select,textarea{width:100%;background:#0f1713;border:1px solid var(--line);border-radius:10px;padding:9px 11px;outline:none}
+input:focus,select:focus,textarea:focus{border-color:var(--acc2)}
+label{display:block;font-size:12px;color:var(--mut);margin:10px 0 4px}
+.bar{height:8px;border-radius:6px;background:#0f1713;border:1px solid var(--line);overflow:hidden;margin-top:6px}
+.bar i{display:block;height:100%;background:var(--acc);width:0;transition:width .4s}
+.bar.warn i{background:var(--warn)}.bar.bad i{background:var(--bad)}
+.mut{color:var(--mut)} .small{font-size:12px}
+nav{position:fixed;left:0;right:0;bottom:0;z-index:6;background:rgba(18,27,22,.97);border-top:1px solid var(--line);display:flex;padding-bottom:env(safe-area-inset-bottom)}
+nav button{flex:1;background:none;border:0;padding:9px 2px 8px;color:var(--mut);font-size:11px;cursor:pointer}
+nav button b{display:block;font-size:18px;font-weight:400;line-height:1.1}
+nav button.on{color:var(--acc)}
+pre.log{margin:0;background:#080d0a;border:1px solid var(--line);border-radius:12px;padding:10px;height:52vh;overflow:auto;font:12px/1.45 ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap;word-break:break-word}
+pre.log .t{color:#5c7568}.log .w{color:var(--warn)}.log .e{color:var(--bad)}.log .c{color:var(--blue)}
+.list{display:flex;flex-direction:column;gap:6px}
+.item{display:flex;align-items:center;gap:10px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:9px 11px}
+.item .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}
+.item .nm small{display:block;color:var(--mut);font-size:11px}
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:84px;background:#223229;border:1px solid var(--acc2);padding:10px 16px;border-radius:12px;z-index:30;max-width:90vw;box-shadow:0 6px 24px #0008}
+.toast.err{border-color:var(--bad);background:#3a1c1c}
+.modal{position:fixed;inset:0;background:#000a;z-index:20;display:flex;align-items:center;justify-content:center;padding:14px}
+.modal>div{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:16px;width:min(720px,100%);max-height:92vh;display:flex;flex-direction:column;gap:10px}
+.modal textarea{flex:1;min-height:50vh;font:12px/1.4 ui-monospace,Menlo,monospace;white-space:pre}
+details{background:var(--panel);border:1px solid var(--line);border-radius:14px;margin-bottom:12px}
+details>summary{padding:13px 14px;cursor:pointer;font-weight:700;list-style:none}
+details>summary::-webkit-details-marker{display:none}
+details>summary:after{content:"▾";float:right;color:var(--mut)}
+details[open]>summary:after{content:"▴"}
+details>div{padding:0 14px 14px}
+.chk{display:flex;gap:10px;align-items:center;margin:10px 0}.chk input{width:20px;height:20px}
+#login{position:fixed;inset:0;background:var(--bg);z-index:40;display:none;align-items:center;justify-content:center;padding:20px}
+#login .card{width:min(380px,100%)}
+a{color:var(--blue)}
+.job{border-color:var(--acc2)}
+</style>
+</head>
+<body>
+
+<div id="login"><div class="card">
+  <h2>Bedrock Host</h2>
+  <p class="mut small" style="margin-top:0">Digite a senha do painel. Ela foi mostrada no fim da instalacao (ou rode <code>bedrock password</code> no Termux).</p>
+  <input id="pw" type="password" placeholder="Senha" autocomplete="current-password">
+  <div style="height:10px"></div>
+  <button class="btn pri" id="loginBtn" style="width:100%">Entrar</button>
+  <p id="loginErr" class="small" style="color:var(--bad);min-height:18px"></p>
+</div></div>
+
+<header>
+  <span class="logo">⛏ Bedrock Host</span>
+  <span class="sp"></span>
+  <span class="pill" id="hpill"><span class="dot"></span><span id="hstate">...</span></span>
+</header>
+
+<main>
+<!-- ============ PAINEL ============ -->
+<section class="tab on" id="t-dash">
+  <div class="card job" id="jobCard" style="display:none">
+    <h2 id="jobName"></h2>
+    <div class="bar"><i id="jobBar"></i></div>
+    <div class="small mut" id="jobMsg" style="margin-top:6px"></div>
+  </div>
+
+  <div class="card">
+    <h2>Servidor</h2>
+    <div class="grid" style="margin-bottom:12px">
+      <div class="kv"><span>Estado</span><b id="dState">-</b></div>
+      <div class="kv"><span>Tempo ligado</span><b id="dUp">-</b></div>
+      <div class="kv"><span>Jogadores</span><b id="dPlayers">-</b></div>
+      <div class="kv"><span>Versao</span><b id="dVer">-</b></div>
+    </div>
+    <div class="row">
+      <button class="btn pri" id="bStart">Ligar</button>
+      <button class="btn" id="bStop">Desligar</button>
+      <button class="btn" id="bRestart">Reiniciar</button>
+      <button class="btn bad sm" id="bKill">Forcar parada</button>
+    </div>
+    <p class="small mut" id="dNote" style="margin:10px 0 0"></p>
+    <div class="kv" style="margin-top:12px"><span>Conectar (Minecraft &gt; Servidores &gt; Adicionar)</span>
+      <b id="dAddr" style="font-size:14px;word-break:break-all">-</b></div>
+  </div>
+
+  <div class="card">
+    <h2>Recursos</h2>
+    <div class="small">CPU do servidor <span class="mut" id="rCpuTxt"></span></div><div class="bar" id="rCpuB"><i></i></div>
+    <div class="small" style="margin-top:10px">RAM do servidor <span class="mut" id="rRamTxt"></span></div><div class="bar" id="rRamB"><i></i></div>
+    <div class="small" style="margin-top:10px">RAM livre do aparelho <span class="mut" id="rFreeTxt"></span></div><div class="bar" id="rFreeB"><i></i></div>
+    <div class="grid" style="margin-top:12px">
+      <div class="kv"><span>Disco livre</span><b id="rDisk">-</b></div>
+      <div class="kv"><span>Bateria</span><b id="rBat">-</b></div>
+      <div class="kv"><span>Temperatura</span><b id="rTemp">-</b></div>
+      <div class="kv"><span>Proximo backup</span><b id="rNextB" style="font-size:14px">-</b></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Jogadores online</h2>
+    <div class="list" id="plist"><span class="mut small">ninguem online</span></div>
+  </div>
+
+  <div class="card">
+    <h2>Tunel playit.gg <span class="mut small">(jogar de fora da sua rede)</span></h2>
+    <p class="small mut" style="margin-top:0">Celular em dados moveis/CGNAT nao recebe conexoes de fora. O tunel gratuito do playit.gg resolve (aceita UDP/Bedrock).</p>
+    <div class="row" id="tnRow"></div>
+    <div id="tnInfo" class="small" style="margin-top:8px"></div>
+  </div>
+</section>
+
+<!-- ============ CONSOLE ============ -->
+<section class="tab" id="t-console">
+  <div class="row" style="margin-bottom:8px">
+    <select id="logSrc" style="width:auto"><option value="server">Servidor</option><option value="panel">Painel</option><option value="tunnel">Tunel</option></select>
+    <button class="btn sm" id="logClear">Limpar tela</button>
+    <button class="btn sm" id="logFiles">Arquivos de log</button>
+  </div>
+  <pre class="log" id="log"></pre>
+  <div class="row" style="margin-top:8px;flex-wrap:nowrap">
+    <input type="text" id="cmd" placeholder="comando (ex.: list, say oi, op Nome)" autocapitalize="off" autocomplete="off" spellcheck="false">
+    <button class="btn pri" id="cmdSend">Enviar</button>
+  </div>
+  <div class="row" style="margin-top:8px" id="chips"></div>
+</section>
+
+<!-- ============ ARQUIVOS ============ -->
+<section class="tab" id="t-files">
+  <div class="card">
+    <div class="small mut" id="crumbs" style="margin-bottom:8px"></div>
+    <div class="row" style="margin-bottom:10px">
+      <button class="btn sm" id="fUp">Enviar arquivo</button>
+      <button class="btn sm" id="fMk">Nova pasta</button>
+      <button class="btn sm" id="fNew">Novo arquivo</button>
+      <button class="btn sm" id="fZip">Baixar pasta (.zip)</button>
+      <input type="file" id="fInput" multiple style="display:none">
+    </div>
+    <div class="list" id="flist"></div>
+  </div>
+</section>
+
+<!-- ============ BACKUPS ============ -->
+<section class="tab" id="t-backups">
+  <div class="card">
+    <h2>Backups</h2>
+    <p class="small mut" style="margin-top:0">Backup a quente: o servidor segue ligado (usa <code>save hold/query/resume</code>), sem corromper o mundo. Automaticos ficam em Ajustes &gt; Automacao.</p>
+    <button class="btn pri" id="bkNow">Fazer backup agora</button>
+    <div class="list" id="bklist" style="margin-top:12px"></div>
+  </div>
+</section>
+
+<!-- ============ ADDONS ============ -->
+<section class="tab" id="t-addons">
+  <div class="card">
+    <h2>Addons / packs</h2>
+    <p class="small mut" style="margin-top:0">Envie <b>.mcaddon</b>, <b>.mcpack</b> ou <b>.zip</b>. O painel instala em <code>behavior_packs</code>/<code>resource_packs</code> e ativa no mundo atual. Reinicie o servidor depois. O mundo precisa existir (ligue o servidor uma vez antes).</p>
+    <button class="btn pri" id="adUp">Enviar addon</button>
+    <input type="file" id="adInput" accept=".mcaddon,.mcpack,.zip" style="display:none">
+    <div class="list" id="adlist" style="margin-top:12px"></div>
+  </div>
+</section>
+
+<!-- ============ AJUSTES ============ -->
+<section class="tab" id="t-settings">
+  <details open><summary>Desempenho</summary><div>
+    <p class="small mut">Escolha um perfil e toque em "Aplicar". Mexe em view-distance, tick-distance e threads. Em celular, quanto menor, mais jogadores/entidades aguenta.</p>
+    <div class="row" id="perfBtns"></div>
+    <label>Perfil do box64 (emulacao x86 → ARM)</label>
+    <select id="boxProfile"></select>
+    <p class="small mut">"Rapido" liga otimizacoes agressivas do box64. Se travar ou corromper algo, volte para "Equilibrado" ou "Seguro".</p>
+    <button class="btn" id="perfApply">Aplicar e reiniciar</button>
+  </div></details>
+
+  <details><summary>Propriedades do servidor</summary><div>
+    <div id="propForm"></div>
+    <div class="row" style="margin-top:12px">
+      <button class="btn" id="propSave">Salvar</button>
+      <button class="btn pri" id="propSaveRestart">Salvar e reiniciar</button>
+      <button class="btn sm" id="propRaw">Editar texto cru</button>
+    </div>
+  </div></details>
+
+  <details><summary>Automacao 24/7</summary><div>
+    <div class="chk"><input type="checkbox" id="sAutostart"><span>Ligar o servidor quando o painel abrir</span></div>
+    <div class="chk"><input type="checkbox" id="sAutoRestart"><span>Religar sozinho se o servidor cair (watchdog)</span></div>
+    <label>Desistir apos quantas quedas em 10 minutos</label><input type="number" id="sMaxRestarts" min="1">
+    <label>Backup automatico a cada (horas, 0 = desligado)</label><input type="number" id="sBackupH" min="0" step="0.5">
+    <label>Quantos backups automaticos manter</label><input type="number" id="sBackupKeep" min="1">
+    <label>Reinicio diario (HH:MM, vazio = nunca)</label><input type="text" id="sDaily" placeholder="05:00">
+    <label>Tempo para o servidor parar sozinho (segundos)</label><input type="number" id="sStopTO" min="5">
+    <div style="margin-top:12px"><button class="btn" id="sSave">Salvar automacao</button></div>
+  </div></details>
+
+  <details><summary>Instalar / atualizar servidor</summary><div>
+    <p class="small mut">Versao instalada: <b id="uVer">-</b>. Seu mundo, server.properties, allowlist e permissions sao preservados e um backup e feito antes.</p>
+    <button class="btn pri" id="uLatest">Instalar/atualizar para a ultima versao</button>
+    <label>Ou uma versao especifica (ex.: 1.21.50.07)</label>
+    <div class="row" style="flex-wrap:nowrap"><input type="text" id="uVerIn" placeholder="1.21.50.07"><button class="btn" id="uVerBtn">Instalar</button></div>
+    <label>Ou link direto https:// do zip Linux</label>
+    <div class="row" style="flex-wrap:nowrap"><input type="text" id="uUrl" placeholder="https://..."><button class="btn" id="uUrlBtn">Instalar</button></div>
+  </div></details>
+
+  <details><summary>Tunel (playit.gg)</summary><div>
+    <p class="small mut">1) Instalar agente · 2) Ligar · 3) abra o link de "claim" que aparece no Painel para vincular sua conta e criar um tunel UDP para a porta 19132.</p>
+    <div class="row"><button class="btn" id="tInstall">Instalar agente</button></div>
+  </div></details>
+
+  <details><summary>Painel e seguranca</summary><div>
+    <label>Acesso ao painel</label>
+    <select id="sHost"><option value="127.0.0.1">Somente neste aparelho (127.0.0.1)</option><option value="0.0.0.0">Qualquer aparelho da rede (0.0.0.0)</option></select>
+    <label>Porta do painel</label><input type="number" id="sPort" min="1024" max="65535">
+    <p class="small mut">Mudancas de acesso/porta valem apos reiniciar o host (<code>bedrock restart</code>).</p>
+    <button class="btn" id="sSave2">Salvar</button>
+    <h3>Trocar senha</h3>
+    <label>Senha atual</label><input type="password" id="pOld" autocomplete="current-password">
+    <label>Nova senha (6+ caracteres)</label><input type="password" id="pNew" autocomplete="new-password">
+    <div class="row" style="margin-top:10px"><button class="btn" id="pSave">Trocar senha</button><button class="btn bad" id="logout">Sair</button></div>
+  </div></details>
+</section>
+</main>
+
+<nav id="nav">
+  <button data-t="dash" class="on"><b>⚡</b>Painel</button>
+  <button data-t="console"><b>⌨</b>Console</button>
+  <button data-t="files"><b>📁</b>Arquivos</button>
+  <button data-t="backups"><b>💾</b>Backups</button>
+  <button data-t="addons"><b>🧩</b>Addons</button>
+  <button data-t="settings"><b>⚙</b>Ajustes</button>
+</nav>
+
+<script>
+"use strict";
+const $ = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+function el(tag, attrs, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (k === "class") e.className = v; else if (k.startsWith("on")) e.addEventListener(k.slice(2), v);
+    else if (v !== false && v != null) e.setAttribute(k, v);
+  }
+  for (const c of kids.flat()) if (c != null) e.append(c.nodeType ? c : document.createTextNode(c));
+  return e;
+}
+const fmtB = n => n == null ? "-" : n < 1024 ? n + " B" : n < 1048576 ? (n / 1024).toFixed(1) + " KB" : n < 1073741824 ? (n / 1048576).toFixed(1) + " MB" : (n / 1073741824).toFixed(2) + " GB";
+const fmtDur = s => { if (s == null) return "-"; const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60); return (d ? d + "d " : "") + (h ? h + "h " : "") + m + "min"; };
+const fmtDate = t => new Date(t * 1000).toLocaleString("pt-BR", {day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit"});
+
+let toastT;
+function toast(msg, err) {
+  $$(".toast").forEach(x => x.remove());
+  const t = el("div", {class: "toast" + (err ? " err" : "")}, msg); document.body.append(t);
+  clearTimeout(toastT); toastT = setTimeout(() => t.remove(), err ? 6000 : 3000);
+}
+// dialogos proprios (WebView nao mostra alert/confirm/prompt)
+function modal(build) {
+  return new Promise(res => {
+    const close = v => { m.remove(); res(v); };
+    const box = el("div", {}); const m = el("div", {class: "modal"}, box);
+    build(box, close); document.body.append(m);
+  });
+}
+const ask = (msg, okLabel = "Confirmar", danger = false) => modal((b, close) => b.append(
+  el("div", {}, msg),
+  el("div", {class: "row", style: "justify-content:flex-end"},
+    el("button", {class: "btn", onclick: () => close(false)}, "Cancelar"),
+    el("button", {class: "btn " + (danger ? "bad" : "pri"), onclick: () => close(true)}, okLabel))));
+const promptText = (msg, val = "") => modal((b, close) => {
+  const i = el("input", {type: "text", value: val, autocapitalize: "off", spellcheck: "false"});
+  b.append(el("div", {}, msg), i, el("div", {class: "row", style: "justify-content:flex-end"},
+    el("button", {class: "btn", onclick: () => close(null)}, "Cancelar"),
+    el("button", {class: "btn pri", onclick: () => close(i.value)}, "OK")));
+  setTimeout(() => i.focus(), 50);
+});
+
+async function api(path, opt = {}) {
+  const o = {method: opt.method || "GET", headers: {}, credentials: "same-origin"};
+  if (opt.json !== undefined) { o.body = JSON.stringify(opt.json); o.headers["Content-Type"] = "application/json"; if (o.method === "GET") o.method = "POST"; }
+  if (opt.body !== undefined) o.body = opt.body;
+  const r = await fetch(path, o);
+  if (r.status === 401) { showLogin(); throw new Error("login"); }
+  let data = null; try { data = await r.json(); } catch (e) {}
+  if (!r.ok) throw new Error((data && data.error) || ("HTTP " + r.status));
+  return data;
+}
+const act = async (fn, okMsg) => { try { const r = await fn(); if (okMsg) toast(okMsg); return r; } catch (e) { if (e.message !== "login") toast(e.message, true); } };
+
+/* ---------------- login ---------------- */
+function showLogin() { $("#login").style.display = "flex"; stopPolling(); setTimeout(() => $("#pw").focus(), 50); }
+async function doLogin() {
+  $("#loginErr").textContent = "";
+  try {
+    const r = await fetch("/api/login", {method: "POST", headers: {"Content-Type": "application/json"}, credentials: "same-origin", body: JSON.stringify({password: $("#pw").value})});
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || "erro");
+    $("#pw").value = ""; $("#login").style.display = "none"; boot();
+  } catch (e) { $("#loginErr").textContent = e.message; }
+}
+$("#loginBtn").onclick = doLogin;
+$("#pw").addEventListener("keydown", e => { if (e.key === "Enter") doLogin(); });
+
+/* ---------------- abas ---------------- */
+let curTab = "dash";
+$$("#nav button").forEach(b => b.onclick = () => openTab(b.dataset.t));
+function openTab(t) {
+  curTab = t;
+  $$("#nav button").forEach(b => b.classList.toggle("on", b.dataset.t === t));
+  $$(".tab").forEach(s => s.classList.toggle("on", s.id === "t-" + t));
+  if (t === "files") loadFiles(filePath);
+  if (t === "backups") loadBackups();
+  if (t === "addons") loadAddons();
+  if (t === "settings") loadSettings();
+  if (t === "console") pollLogs(true);
+  window.scrollTo(0, 0);
+}
+
+/* ---------------- status ---------------- */
+let S = null, pollT = null, stopped = false;
+const STATE_TXT = {running: "Ligado", starting: "Iniciando...", stopping: "Parando...", stopped: "Desligado", crashed: "Caiu"};
+function setBar(id, pct) { const b = $(id); const v = Math.max(0, Math.min(100, pct || 0)); b.firstElementChild.style.width = v + "%"; b.classList.toggle("warn", v > 70 && v <= 90); b.classList.toggle("bad", v > 90); }
+
+function renderStatus(s) {
+  S = s; const v = s.server, sy = s.system;
+  const st = v.state;
+  $("#hpill").className = "pill s-" + st; $("#hstate").textContent = STATE_TXT[st] || st;
+  $("#dState").textContent = STATE_TXT[st] || st;
+  $("#dUp").textContent = fmtDur(v.uptime);
+  $("#dPlayers").textContent = v.players.length + (v.max_players ? " / " + v.max_players : "");
+  $("#dVer").textContent = v.version || "-";
+  $("#bStart").disabled = !(st === "stopped" || st === "crashed");
+  $("#bStop").disabled = !(st === "running" || st === "starting");
+  $("#bRestart").disabled = !(st === "running" || st === "starting" || st === "crashed");
+  $("#bKill").style.display = (st === "stopping" || st === "starting") ? "" : "none";
+  let note = "";
+  if (!v.installed) note = "Servidor ainda nao instalado: va em Ajustes > Instalar / atualizar servidor.";
+  else if (v.gave_up) note = "O watchdog desistiu de religar apos varias quedas. Veja o Console e ligue manualmente.";
+  else if (st === "crashed" && v.restart_in != null) note = "Caiu. Religando em " + v.restart_in + "s...";
+  else if (st === "starting") note = "Iniciando. Em celular com emulacao isso pode levar 1-3 minutos.";
+  else if (v.last_exit && st === "stopped" && v.last_exit.code) note = "Ultima saida: codigo " + v.last_exit.code;
+  $("#dNote").textContent = note;
+  const addrs = [];
+  if (v.ip) addrs.push(v.ip + ":" + v.port + "  (mesma rede Wi-Fi)");
+  addrs.push("127.0.0.1:" + v.port + "  (neste aparelho)");
+  if (s.tunnel.address) addrs.push(s.tunnel.address + "  (tunel)");
+  $("#dAddr").textContent = addrs.join("\n"); $("#dAddr").style.whiteSpace = "pre-line";
+
+  const cores = sy.cores || 1;
+  const cpuPct = v.cpu == null ? 0 : v.cpu / cores;
+  $("#rCpuTxt").textContent = v.cpu == null ? "" : "- " + v.cpu.toFixed(0) + "% de 1 nucleo (" + cores + " nucleos)"; setBar("#rCpuB", cpuPct);
+  $("#rRamTxt").textContent = v.rss_mb == null ? "" : "- " + v.rss_mb.toFixed(0) + " MB"; setBar("#rRamB", sy.mem_total_mb ? (v.rss_mb || 0) / sy.mem_total_mb * 100 : 0);
+  if (sy.mem_total_mb) { const used = (1 - sy.mem_avail_mb / sy.mem_total_mb) * 100; $("#rFreeTxt").textContent = "- " + sy.mem_avail_mb + " MB de " + sy.mem_total_mb + " MB"; setBar("#rFreeB", used); }
+  $("#rDisk").textContent = sy.disk_free_gb != null ? sy.disk_free_gb + " GB" : "-";
+  $("#rBat").textContent = sy.battery != null ? sy.battery + "%" + (sy.charging === "Charging" ? " ⚡" : "") : "n/d";
+  $("#rTemp").textContent = sy.temp_c != null ? sy.temp_c + " °C" : "n/d";
+  $("#rNextB").textContent = s.next_backup ? fmtDate(s.next_backup) : "desligado";
+
+  const pl = $("#plist"); pl.replaceChildren();
+  if (!v.players.length) pl.append(el("span", {class: "mut small"}, "ninguem online"));
+  v.players.forEach(p => pl.append(el("div", {class: "item"}, el("div", {class: "nm"}, p.name, el("small", {}, "online ha " + fmtDur(Math.floor(s.time - p.since)))),
+    el("button", {class: "btn sm", onclick: () => sendCmd("op \"" + p.name + "\"")}, "op"),
+    el("button", {class: "btn sm bad", onclick: async () => { if (await ask("Expulsar " + p.name + "?", "Expulsar", true)) sendCmd("kick \"" + p.name + "\""); }}, "kick"))));
+
+  renderTunnel(s.tunnel);
+  const j = s.job; const jc = $("#jobCard");
+  const showJob = j.name && (j.running || (Date.now() / 1000 - j.at < 25 + (j.running ? 0 : 0)));
+  jc.style.display = j.name && (j.running || Date.now() / 1000 - j.at < 30) ? "" : "none";
+  if (j.name) { $("#jobName").textContent = (j.running ? "Em andamento: " : j.ok ? "Concluido: " : "Falhou: ") + j.name; $("#jobBar").style.width = (j.running ? j.pct : 100) + "%"; $("#jobMsg").textContent = j.msg || ""; jc.style.borderColor = j.ok === false ? "var(--bad)" : ""; }
+  if (j.name && !j.running && lastJobAt !== j.at) { lastJobAt = j.at; if (curTab === "backups") loadBackups(); if (curTab === "addons") loadAddons(); if (curTab === "settings") $("#uVer").textContent = s.server.version || "-"; }
+  $("#uVer") && ($("#uVer").textContent = v.version || "-");
+}
+let lastJobAt = 0;
+
+function renderTunnel(t) {
+  const row = $("#tnRow"); row.replaceChildren();
+  if (!t.installed) row.append(el("button", {class: "btn", onclick: () => act(() => api("/api/tunnel/install", {json: {}}), "baixando agente...")}, "Instalar agente playit.gg"));
+  else if (t.alive) row.append(el("button", {class: "btn", onclick: () => act(() => api("/api/tunnel/stop", {json: {}}), "tunel parado")}, "Parar tunel"));
+  else row.append(el("button", {class: "btn pri", onclick: () => act(() => api("/api/tunnel/start", {json: {}}), "tunel iniciado")}, "Ligar tunel"));
+  const info = $("#tnInfo"); info.replaceChildren();
+  if (t.claim_url) info.append(el("div", {}, "Vincule sua conta: ", el("a", {href: t.claim_url, target: "_blank", rel: "noopener"}, t.claim_url)));
+  if (t.address) info.append(el("div", {}, "Endereco publico: ", el("b", {}, t.address)));
+  if (t.alive && !t.claim_url && !t.address) info.append(el("span", {class: "mut"}, "Aguardando o agente... veja o log na aba Console > Tunel."));
+}
+
+async function pollStatus() {
+  if (stopped) return;
+  try { renderStatus(await api("/api/status")); } catch (e) {}
+  pollT = setTimeout(pollStatus, document.hidden ? 6000 : 2000);
+}
+function stopPolling() { stopped = true; clearTimeout(pollT); clearTimeout(logT); }
+
+$("#bStart").onclick = () => act(() => api("/api/server/start", {json: {}}), "iniciando...");
+$("#bStop").onclick = async () => { if (await ask("Desligar o servidor? Os jogadores serao desconectados.", "Desligar", true)) act(() => api("/api/server/stop", {json: {}}), "parando..."); };
+$("#bRestart").onclick = async () => { if (await ask("Reiniciar o servidor agora?", "Reiniciar")) act(() => api("/api/server/restart", {json: {}}), "reiniciando..."); };
+$("#bKill").onclick = async () => { if (await ask("Forcar parada (kill)? Pode perder o progresso dos ultimos minutos.", "Forcar", true)) act(() => api("/api/server/kill", {json: {}}), "processo encerrado"); };
+
+/* ---------------- console ---------------- */
+let logSeq = 0, logT = null, curSrc = "server";
+const logEl = $("#log");
+function lineClass(m) { if (/\bERROR\b|crash|Segmentation|terminate|fatal/i.test(m)) return "e"; if (/\bWARN/i.test(m)) return "w"; if (m.startsWith(">") || m.startsWith("[painel]") || m.startsWith("[watchdog]") || m.startsWith("[backup]")) return "c"; return ""; }
+function appendLines(lines) {
+  if (!lines.length) return;
+  const near = logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 80;
+  const f = document.createDocumentFragment();
+  for (const l of lines) {
+    const d = new Date(l.t * 1000); const ts = d.toLocaleTimeString("pt-BR");
+    const row = el("div", {}, el("span", {class: "t"}, ts + " "), el("span", {class: lineClass(l.m)}, l.m));
+    f.append(row);
+  }
+  logEl.append(f);
+  while (logEl.childElementCount > 1500) logEl.firstElementChild.remove();
+  if (near) logEl.scrollTop = logEl.scrollHeight;
+}
+async function pollLogs(force) {
+  clearTimeout(logT);
+  if (stopped) return;
+  if (curTab === "console" || force) {
+    try { const d = await api("/api/logs?src=" + curSrc + "&since=" + logSeq); appendLines(d.lines); logSeq = d.last; } catch (e) {}
+  }
+  logT = setTimeout(pollLogs, curTab === "console" ? 1000 : 5000);
+}
+$("#logSrc").onchange = e => { curSrc = e.target.value; logSeq = 0; logEl.replaceChildren(); pollLogs(true); };
+$("#logClear").onclick = () => logEl.replaceChildren();
+$("#logFiles").onclick = async () => {
+  const d = await act(() => api("/api/logfiles")); if (!d) return;
+  modal((b, close) => { b.append(el("h2", {}, "Arquivos de log (rotacao 5 MB x 5)"), el("div", {class: "list", style: "overflow:auto"},
+    d.files.map(f => el("div", {class: "item"}, el("div", {class: "nm"}, f.name, el("small", {}, fmtB(f.size) + " · " + fmtDate(f.mtime))), el("a", {class: "btn sm", href: "/api/logfile?name=" + encodeURIComponent(f.name)}, "Baixar")))),
+    el("div", {class: "row", style: "justify-content:flex-end"}, el("button", {class: "btn", onclick: () => close()}, "Fechar"))); });
+};
+async function sendCmd(c) { return act(() => api("/api/server/command", {json: {cmd: c}})); }
+async function submitCmd() { const i = $("#cmd"); const c = i.value.trim(); if (!c) return; i.value = ""; await sendCmd(c); pollLogs(true); }
+$("#cmdSend").onclick = submitCmd;
+$("#cmd").addEventListener("keydown", e => { if (e.key === "Enter") submitCmd(); });
+[["list", "list"], ["allowlist list", "allowlist list"], ["dia", "time set day"], ["limpar clima", "weather clear"], ["save query", "save query"], ["say ...", "say "]].forEach(([l, c]) =>
+  $("#chips").append(el("button", {class: "btn sm", onclick: () => { if (c.endsWith(" ")) { $("#cmd").value = c; $("#cmd").focus(); } else sendCmd(c).then(() => pollLogs(true)); }}, l)));
+
+/* ---------------- arquivos ---------------- */
+let filePath = "";
+async function loadFiles(p) {
+  const d = await act(() => api("/api/files?path=" + encodeURIComponent(p || ""))); if (!d) return;
+  filePath = d.path;
+  const parts = filePath ? filePath.split("/") : [];
+  const cr = $("#crumbs"); cr.replaceChildren(el("a", {href: "#", onclick: e => { e.preventDefault(); loadFiles(""); }}, "servidor"));
+  parts.forEach((x, i) => { cr.append(" / ", el("a", {href: "#", onclick: e => { e.preventDefault(); loadFiles(parts.slice(0, i + 1).join("/")); }}, x)); });
+  const l = $("#flist"); l.replaceChildren();
+  if (filePath) l.append(el("div", {class: "item"}, el("div", {class: "nm", onclick: () => loadFiles(parts.slice(0, -1).join("/"))}, "⬆ ..")));
+  d.items.forEach(it => {
+    const full = (filePath ? filePath + "/" : "") + it.name;
+    l.append(el("div", {class: "item"},
+      el("div", {class: "nm", onclick: () => it.dir ? loadFiles(full) : editFile(full)}, (it.dir ? "📁 " : "📄 ") + it.name, el("small", {}, it.dir ? "pasta" : fmtB(it.size) + " · " + fmtDate(it.mtime))),
+      el("a", {class: "btn sm", href: "/api/files/download?path=" + encodeURIComponent(full), title: "baixar"}, "⬇"),
+      el("button", {class: "btn sm bad", onclick: async () => { if (await ask("Apagar " + it.name + (it.dir ? " e tudo dentro?" : "?"), "Apagar", true)) { await act(() => api("/api/files?path=" + encodeURIComponent(full), {method: "DELETE"}), "apagado"); loadFiles(filePath); } }}, "🗑")));
+  });
+  if (!d.items.length) l.append(el("span", {class: "mut small"}, "pasta vazia"));
+}
+async function editFile(full, isNew) {
+  let content = "";
+  if (!isNew) { const d = await act(() => api("/api/file?path=" + encodeURIComponent(full))); if (!d) return; content = d.content; }
+  modal((b, close) => {
+    const ta = el("textarea", {spellcheck: "false", autocapitalize: "off"}); ta.value = content;
+    b.append(el("h2", {}, full), ta, el("div", {class: "row", style: "justify-content:flex-end"},
+      el("button", {class: "btn", onclick: () => close()}, "Fechar"),
+      el("button", {class: "btn pri", onclick: async () => { const r = await act(() => api("/api/file", {method: "PUT", json: {path: full, content: ta.value}}), "salvo"); if (r) { close(); loadFiles(filePath); } }}, "Salvar")));
+  });
+}
+async function uploadTo(url, file) {
+  toast("enviando " + file.name + " (" + fmtB(file.size) + ")...");
+  const r = await fetch(url, {method: "POST", body: file, credentials: "same-origin"});
+  const d = await r.json().catch(() => ({}));
+  if (r.status === 401) { showLogin(); throw new Error("login"); }
+  if (!r.ok) throw new Error(d.error || "falha no envio");
+  return d;
+}
+$("#fUp").onclick = () => $("#fInput").click();
+$("#fInput").onchange = async e => { for (const f of e.target.files) await act(() => uploadTo("/api/files/upload?path=" + encodeURIComponent(filePath) + "&name=" + encodeURIComponent(f.name), f), f.name + " enviado"); e.target.value = ""; loadFiles(filePath); };
+$("#fMk").onclick = async () => { const n = await promptText("Nome da nova pasta"); if (n) { await act(() => api("/api/files/mkdir", {json: {path: (filePath ? filePath + "/" : "") + n}})); loadFiles(filePath); } };
+$("#fNew").onclick = async () => { const n = await promptText("Nome do novo arquivo (ex.: notas.txt)"); if (n) editFile((filePath ? filePath + "/" : "") + n, true); };
+$("#fZip").onclick = () => { location.href = "/api/files/download?path=" + encodeURIComponent(filePath); };
+
+/* ---------------- backups ---------------- */
+async function loadBackups() {
+  const d = await act(() => api("/api/backups")); if (!d) return;
+  const l = $("#bklist"); l.replaceChildren();
+  if (!d.items.length) l.append(el("span", {class: "mut small"}, "nenhum backup ainda"));
+  const kinds = {auto: "automatico", manual: "manual", preupdate: "antes de atualizar"};
+  d.items.forEach(b => l.append(el("div", {class: "item"},
+    el("div", {class: "nm"}, b.name, el("small", {}, (kinds[b.kind] || b.kind) + " · " + fmtB(b.size) + " · " + fmtDate(b.mtime))),
+    el("a", {class: "btn sm", href: "/api/backups/download?name=" + encodeURIComponent(b.name)}, "⬇"),
+    el("button", {class: "btn sm", onclick: async () => { if (await ask("Restaurar " + b.name + "? O servidor sera reiniciado e o mundo atual fica guardado em worlds.before-restore.", "Restaurar", true)) act(() => api("/api/backups/restore", {json: {name: b.name}}), "restaurando..."); }}, "Restaurar"),
+    el("button", {class: "btn sm bad", onclick: async () => { if (await ask("Apagar " + b.name + "?", "Apagar", true)) { await act(() => api("/api/backups?name=" + encodeURIComponent(b.name), {method: "DELETE"})); loadBackups(); } }}, "🗑"))));
+}
+$("#bkNow").onclick = () => act(() => api("/api/backups", {json: {}}), "backup iniciado").then(() => openTab("dash"));
+
+/* ---------------- addons ---------------- */
+async function loadAddons() {
+  const d = await act(() => api("/api/addons")); if (!d) return;
+  const l = $("#adlist"); l.replaceChildren();
+  if (!d.items.length) l.append(el("span", {class: "mut small"}, "nenhum addon instalado pelo painel"));
+  d.items.forEach(a => l.append(el("div", {class: "item"},
+    el("div", {class: "nm"}, a.name, el("small", {}, (a.kind === "behavior" ? "behavior pack" : "resource pack") + " v" + a.version.join(".") + (a.script ? " · Script API" : ""))),
+    el("button", {class: "btn sm bad", onclick: async () => { if (await ask("Remover " + a.name + "?", "Remover", true)) { await act(() => api("/api/addons?uuid=" + a.uuid, {method: "DELETE"}), "removido"); loadAddons(); } }}, "🗑"))));
+}
+$("#adUp").onclick = () => $("#adInput").click();
+$("#adInput").onchange = async e => {
+  const f = e.target.files[0]; e.target.value = ""; if (!f) return;
+  const d = await act(() => uploadTo("/api/addons/upload?name=" + encodeURIComponent(f.name), f)); if (!d) return;
+  const lines = d.results.map(r => r.skipped ? "• " + r.name + ": ignorado (" + r.skipped + ")" : "• " + r.name + " (" + r.kind + ")" + (r.script ? " - usa Script API: pode exigir 'Beta APIs' ativado no mundo" : ""));
+  modal((b, close) => b.append(el("h2", {}, "Addon instalado"), el("div", {style: "white-space:pre-line"}, lines.join("\n")),
+    el("p", {class: "small mut"}, d.world ? "Ativado no mundo atual. Reinicie o servidor para aplicar." : "O mundo ainda nao existe: ligue o servidor uma vez, depois envie o addon novamente para ativar."),
+    el("div", {class: "row", style: "justify-content:flex-end"}, el("button", {class: "btn", onclick: () => close()}, "Fechar"), d.world ? el("button", {class: "btn pri", onclick: () => { close(); act(() => api("/api/server/restart", {json: {}}), "reiniciando..."); }}, "Reiniciar agora") : null)));
+  loadAddons();
+};
+
+/* ---------------- ajustes ---------------- */
+const PROP_FIELDS = [
+  ["server-name", "text", "Nome do servidor"], ["level-name", "text", "Nome do mundo (pasta em worlds/)"], ["level-seed", "text", "Seed"],
+  ["gamemode", "select", "Modo de jogo", ["survival", "creative", "adventure"]], ["difficulty", "select", "Dificuldade", ["peaceful", "easy", "normal", "hard"]],
+  ["max-players", "number", "Maximo de jogadores"], ["allow-cheats", "bool", "Permitir cheats/comandos"], ["online-mode", "bool", "Exigir login Xbox (online-mode)"],
+  ["allow-list", "bool", "Usar lista de permitidos (allowlist)"], ["default-player-permission-level", "select", "Permissao padrao", ["visitor", "member", "operator"]],
+  ["server-port", "number", "Porta IPv4 (UDP)"], ["view-distance", "number", "view-distance (chunks)"], ["tick-distance", "number", "tick-distance (4-12)"],
+  ["max-threads", "number", "max-threads (0 = auto)"], ["player-idle-timeout", "number", "Expulsar inativo apos (min, 0 = nunca)"],
+  ["compression-algorithm", "select", "Compressao", ["zlib", "snappy"]], ["compression-threshold", "number", "compression-threshold (bytes)"],
+  ["texturepack-required", "bool", "Exigir resource packs"],
+];
+const PERF = {
+  light: {label: "Leve (celular fraco)", props: {"view-distance": "6", "tick-distance": "4", "max-threads": "2", "compression-algorithm": "snappy"}, box: "balanced"},
+  mid: {label: "Equilibrado", props: {"view-distance": "8", "tick-distance": "4", "max-threads": "4", "compression-algorithm": "snappy"}, box: "balanced"},
+  high: {label: "Alto (aparelho forte)", props: {"view-distance": "12", "tick-distance": "6", "max-threads": "0", "compression-algorithm": "snappy"}, box: "balanced"},
+};
+let propVals = {}, propExists = false, perfChoice = null;
+async function loadSettings() {
+  const [p, st] = await Promise.all([act(() => api("/api/properties")), act(() => api("/api/settings"))]);
+  if (!st) return;
+  const s = st.settings;
+  $("#boxProfile").replaceChildren(...Object.entries(st.profiles).map(([k, v]) => el("option", {value: k}, v))); $("#boxProfile").value = s.box64_profile;
+  $("#sAutostart").checked = s.autostart; $("#sAutoRestart").checked = s.auto_restart; $("#sMaxRestarts").value = s.max_restarts_10min;
+  $("#sBackupH").value = s.backup_every_hours; $("#sBackupKeep").value = s.backup_keep; $("#sDaily").value = s.daily_restart; $("#sStopTO").value = s.stop_timeout;
+  $("#sHost").value = s.panel_host; $("#sPort").value = s.panel_port;
+  if (S) $("#uVer").textContent = S.server.version || "-";
+  const pf = $("#perfBtns"); pf.replaceChildren(...Object.entries(PERF).map(([k, v]) => el("button", {class: "btn sm", onclick: () => pickPerf(k)}, v.label)));
+  propVals = p ? p.values : {}; propExists = p ? p.exists : false;
+  const f = $("#propForm"); f.replaceChildren();
+  if (!propExists) f.append(el("p", {class: "small mut"}, "server.properties ainda nao existe: ligue o servidor uma vez para ele ser criado."));
+  PROP_FIELDS.forEach(([k, type, label, opts]) => {
+    let inp; const v = propVals[k] ?? "";
+    if (type === "select" || type === "bool") {
+      const o = type === "bool" ? ["true", "false"] : opts; inp = el("select", {"data-k": k}, o.map(x => el("option", {value: x}, x)));
+      if (v && !o.includes(v)) inp.append(el("option", {value: v}, v)); inp.value = v || "";
+      if (!v) inp.prepend(el("option", {value: ""}, "(padrao)")), inp.value = "";
+    } else inp = el("input", {"data-k": k, type: type === "number" ? "number" : "text", value: v, autocapitalize: "off"});
+    f.append(el("label", {}, label + "  ", el("span", {class: "mut"}, k)), inp);
+  });
+}
+function pickPerf(k) {
+  perfChoice = k; const pr = PERF[k];
+  Object.entries(pr.props).forEach(([key, val]) => { const i = $(`#propForm [data-k="${key}"]`); if (i) i.value = val; });
+  $("#boxProfile").value = pr.box; toast("Perfil '" + pr.label + "' preenchido. Toque em Aplicar e reiniciar.");
+}
+function collectProps() { const ch = {}; $$("#propForm [data-k]").forEach(i => { const k = i.dataset.k; if (i.value !== "" && i.value !== (propVals[k] ?? "")) ch[k] = i.value; }); return ch; }
+async function saveProps(restart) {
+  const ch = collectProps(); const box = $("#boxProfile").value;
+  if (S && box !== S.settings.box64_profile) await api("/api/settings", {method: "PUT", json: {settings: {box64_profile: box}}});
+  if (!propExists && Object.keys(ch).length) { toast("Ligue o servidor uma vez antes de editar as propriedades.", true); return; }
+  if (Object.keys(ch).length || restart) await api("/api/properties", {method: "PUT", json: {values: ch, restart}});
+  toast(restart ? "salvo - reiniciando..." : "salvo (reinicie para aplicar)");
+}
+$("#propSave").onclick = () => act(() => saveProps(false));
+$("#propSaveRestart").onclick = () => act(() => saveProps(true));
+$("#perfApply").onclick = () => act(() => saveProps(true));
+$("#propRaw").onclick = () => editFileRaw();
+async function editFileRaw() {
+  const d = await act(() => api("/api/properties")); if (!d || !d.exists) return toast("server.properties ainda nao existe", true);
+  modal((b, close) => { const ta = el("textarea", {spellcheck: "false"}); ta.value = d.raw;
+    b.append(el("h2", {}, "server.properties"), ta, el("div", {class: "row", style: "justify-content:flex-end"}, el("button", {class: "btn", onclick: () => close()}, "Fechar"),
+      el("button", {class: "btn pri", onclick: async () => { const r = await act(() => api("/api/properties", {method: "PUT", json: {raw: ta.value}}), "salvo"); if (r) { close(); loadSettings(); } }}, "Salvar"))); });
+}
+function settingsPayload() {
+  return {autostart: $("#sAutostart").checked, auto_restart: $("#sAutoRestart").checked, max_restarts_10min: +$("#sMaxRestarts").value,
+    backup_every_hours: +$("#sBackupH").value, backup_keep: +$("#sBackupKeep").value, daily_restart: $("#sDaily").value.trim(), stop_timeout: +$("#sStopTO").value,
+    panel_host: $("#sHost").value, panel_port: +$("#sPort").value};
+}
+$("#sSave").onclick = $("#sSave2").onclick = () => act(() => api("/api/settings", {method: "PUT", json: {settings: settingsPayload()}}), "ajustes salvos");
+$("#uLatest").onclick = async () => { if (await ask("Instalar/atualizar para a ultima versao? O servidor sera reiniciado e um backup sera feito.", "Atualizar")) act(() => api("/api/install", {json: {}}), "iniciando download...").then(() => openTab("dash")); };
+$("#uVerBtn").onclick = () => { const v = $("#uVerIn").value.trim(); if (v) act(() => api("/api/install", {json: {version: v}}), "iniciando download...").then(() => openTab("dash")); };
+$("#uUrlBtn").onclick = () => { const v = $("#uUrl").value.trim(); if (v) act(() => api("/api/install", {json: {url: v}}), "iniciando download...").then(() => openTab("dash")); };
+$("#tInstall").onclick = () => act(() => api("/api/tunnel/install", {json: {}}), "baixando agente...").then(() => openTab("dash"));
+$("#pSave").onclick = () => act(async () => { await api("/api/password", {json: {old: $("#pOld").value, new: $("#pNew").value}}); $("#pOld").value = $("#pNew").value = ""; }, "senha alterada");
+$("#logout").onclick = async () => { await api("/api/logout", {json: {}}).catch(() => {}); showLogin(); };
+
+/* ---------------- boot ---------------- */
+function boot() { stopped = false; logSeq = 0; logEl.replaceChildren(); pollStatus(); pollLogs(true); }
+(async () => { try { await api("/api/status"); boot(); } catch (e) {} })();
+document.addEventListener("visibilitychange", () => { if (!document.hidden && !stopped) { clearTimeout(pollT); pollStatus(); } });
+</script>
+</body>
+</html>

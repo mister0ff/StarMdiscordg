@@ -1,0 +1,7 @@
+apk/.gradle/
+apk/build/
+apk/app/build/
+apk/local.properties
+data/
+*.pyc
+__pycache__/

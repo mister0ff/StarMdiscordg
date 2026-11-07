@@ -1,0 +1,113 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# bedrock - comando de controle do host (Termux).  Uso: bedrock <comando>
+
+HOST_DIR="${BEDROCK_HOST_DIR:-$HOME/bedrock-host}"
+DATA="$HOST_DIR/data"
+LOOP_PID="$DATA/supervisor.pid"
+PANEL_PID="$DATA/panel.pid"
+
+port() {
+  local p
+  p=$(grep -o '"panel_port": *[0-9]*' "$DATA/panel.json" 2>/dev/null | grep -o '[0-9]*$')
+  echo "${p:-8080}"
+}
+alive() { [ -f "$1" ] && kill -0 "$(cat "$1" 2>/dev/null)" 2>/dev/null; }
+ping_panel() { curl -fsS -m 3 "http://127.0.0.1:$(port)/api/ping" >/dev/null 2>&1; }
+in_ubuntu() {
+  proot-distro login ubuntu --shared-tmp \
+    --bind "$DATA:/srv/bedrock" --bind "$HOST_DIR/panel:/opt/panel" \
+    -- env BEDROCK_DATA=/srv/bedrock "$@"
+}
+
+cmd_start() {
+  if alive "$LOOP_PID"; then
+    echo "ja esta rodando (supervisor pid $(cat "$LOOP_PID"))."
+  else
+    mkdir -p "$DATA/logs"
+    termux-wake-lock 2>/dev/null || true
+    nohup bash "$HOST_DIR/termux/host-loop.sh" >> "$DATA/logs/host-loop.log" 2>&1 &
+    disown 2>/dev/null || true
+    echo "iniciando... o painel abre em alguns segundos."
+  fi
+  echo "painel: http://127.0.0.1:$(port)"
+}
+
+cmd_stop() {
+  if ! alive "$LOOP_PID" && ! alive "$PANEL_PID"; then
+    echo "nao esta rodando."
+    rm -f "$LOOP_PID" "$PANEL_PID"
+    return 0
+  fi
+  touch "$DATA/stop.flag"
+  if alive "$PANEL_PID"; then
+    echo "parando o servidor de forma graciosa (pode levar ate 1 min)..."
+    kill -TERM "$(cat "$PANEL_PID")" 2>/dev/null
+  fi
+  for _ in $(seq 1 80); do
+    alive "$LOOP_PID" || alive "$PANEL_PID" || break
+    sleep 1
+  done
+  if alive "$PANEL_PID"; then kill -KILL "$(cat "$PANEL_PID")" 2>/dev/null; fi
+  if alive "$LOOP_PID"; then kill -TERM "$(cat "$LOOP_PID")" 2>/dev/null; fi
+  rm -f "$DATA/stop.flag" "$LOOP_PID" "$PANEL_PID"
+  termux-wake-unlock 2>/dev/null || true
+  echo "parado."
+}
+
+cmd_status() {
+  alive "$LOOP_PID" && echo "supervisor: rodando (pid $(cat "$LOOP_PID"))" || echo "supervisor: parado"
+  if ping_panel; then echo "painel:     respondendo em http://127.0.0.1:$(port)"; else echo "painel:     sem resposta"; fi
+  [ -x "$DATA/server/bedrock_server" ] && echo "servidor:   instalado" || echo "servidor:   NAO instalado (rode: bedrock install-bds)"
+}
+
+cmd_doctor() {
+  echo "== aparelho =="
+  echo "arquitetura: $(uname -m)   android: $(getprop ro.build.version.release 2>/dev/null)"
+  command -v free >/dev/null && free -m | sed -n '1,2p'
+  echo "espaco livre em \$HOME: $(df -h "$HOME" | awk 'NR==2{print $4}')"
+  echo "== ubuntu (proot) =="
+  if [ -d "$PREFIX/var/lib/proot-distro/installed-rootfs/ubuntu" ]; then echo "ok: instalado"; else echo "FALTA: rode install.sh"; return 1; fi
+  echo "== box64 =="
+  in_ubuntu bash -lc 'command -v box64 >/dev/null && box64 --version 2>&1 | head -2 || echo "FALTA: box64 nao instalado (rode: bedrock setup-ubuntu)"'
+  echo "== servidor Bedrock =="
+  ls -la "$DATA/server/bedrock_server" 2>/dev/null || echo "FALTA: bedrock install-bds"
+  echo "== painel =="
+  cmd_status
+  echo "== dicas 24/7 =="
+  echo "* Bateria do Termux e do app Bedrock Host: 'Sem restricoes'"
+  echo "* Android 12+: desative a restricao de processos filhos (ver README, secao 24/7)"
+  echo "* Mantenha o aparelho no carregador e ventilado"
+  echo "ultimas linhas do log do host:"
+  tail -n 8 "$DATA/logs/host-loop.log" 2>/dev/null
+}
+
+case "${1:-help}" in
+  start)    cmd_start ;;
+  stop)     cmd_stop ;;
+  restart)  cmd_stop; sleep 2; cmd_start ;;
+  status)   cmd_status ;;
+  doctor)   cmd_doctor ;;
+  logs)     shift; f="${1:-server}"; tail -n 80 -f "$DATA/logs/$f.log" ;;
+  password) if [ -f "$DATA/initial-password.txt" ]; then echo "senha inicial: $(cat "$DATA/initial-password.txt")"; else echo "a senha foi alterada por voce. Para definir outra: bedrock set-password NOVA"; fi ;;
+  set-password) shift; [ -n "$1" ] || { echo "uso: bedrock set-password NOVA_SENHA"; exit 1; }; in_ubuntu python3 /opt/panel/panel.py --set-password "$1" ;;
+  install-bds) shift; if [ -n "$1" ]; then in_ubuntu python3 /opt/panel/panel.py --install --version "$1"; else in_ubuntu python3 /opt/panel/panel.py --install; fi ;;
+  setup-ubuntu) proot-distro login ubuntu --shared-tmp --bind "$HOST_DIR/ubuntu:/opt/setup" -- bash /opt/setup/ubuntu-setup.sh ;;
+  shell)    proot-distro login ubuntu --shared-tmp --bind "$DATA:/srv/bedrock" --bind "$HOST_DIR/panel:/opt/panel" ;;
+  *)
+    cat <<'EOF'
+bedrock - controle do host Minecraft Bedrock
+
+  bedrock start            liga painel + servidor (24/7, com watchdog)
+  bedrock stop             desliga tudo de forma graciosa
+  bedrock restart          reinicia o host
+  bedrock status           mostra o estado
+  bedrock logs [nome]      acompanha log (server | panel | tunnel | host-loop)
+  bedrock doctor           diagnostico completo
+  bedrock password         mostra a senha inicial do painel
+  bedrock set-password X   troca a senha do painel
+  bedrock install-bds [v]  instala/atualiza o servidor (ultima versao ou v)
+  bedrock setup-ubuntu     (re)instala box64 e dependencias
+  bedrock shell            abre um terminal dentro do Ubuntu
+EOF
+    ;;
+esac

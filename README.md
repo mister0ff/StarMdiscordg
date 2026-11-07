@@ -43,10 +43,16 @@ Godot → *Editor → Gerenciar templates de exportação* (instalar) → *Edito
 ## Multijogador
 Quem hospeda: *Multijogador → Hospedar* (porta padrão 25565 UDP; libere no roteador/firewall ou use Radmin/ZeroTier/Tailscale). Os outros: *Entrar* com o IP do host.
 
-## Novidades desta versão
-- Blocos e itens em 3D: drops são cubos/itens extrudados grossos; ícones de bloco em cubo isométrico.
-- Mão em primeira pessoa com item na mão e animação de golpe; partículas ao quebrar blocos.
-- HUD e botões de toque respeitam a área segura da tela (ajuste em Opções: tamanho/margem da HUD). F11 = tela cheia.
-- Interfaces estilo Minecraft: inventário com grade 2x2, mesa 3x3 (receitas por formato), baú, fornalha (combustível e fundição) e inventário criativo.
-- Dia/noite 3x mais longo (30 min). Otimizações: cache de chunks visíveis, menos rebuilds em explosões.
-- Multijogador com relay (vários jogadores), servidor dedicado 24h (`SERVER.md`) e lista de servidores públicos.
+
+## Novidades (esta versão)
+- Tela inicial: **Jogar / Opções** → Jogar tem **Mundos** (grade 3x3 com páginas `<` `>`), **Servidores** (Starcat Mc, Auralis Net) e **Realms**.
+- Criar/editar mundo: modelos **Normal** e **Plano**, regras (Comandos, Sempre dia, Spawn de mobs, PvP…), apagar mundo, **Mods**.
+- Admin de servidor: apenas o nick **X EDUHH X** edita/usa comandos nos servidores.
+- Perspectivas (F5 ou botão "Cam"): 1ª pessoa (mão visível), 3ª pessoa (atrás) e 2ª pessoa (frente).
+- Mira, vida e fome sempre visíveis, HUD com margem de segurança (Opções > Toque / HUD).
+- Tochas (iluminam), baús, partículas (quebrar bloco, comer, golpe crítico), agachar não cai da borda, PvP com knockback.
+- Chat em tela cheia com histórico `<nick> <mensagem>`; limpa ao sair do mundo.
+- Botão voltar do Android abre a pausa. Mouse gira sem precisar clicar.
+- Dia/noite mais lento (30 min). Ajuste em `scripts/main.gd` (`DAY_LEN`).
+- Sistema de mods `.stc` — veja **mods.txt** e o exemplo `mods_teste.stc` / `exemplo_mod_fonte/`.
+- Imagens dos servidores: coloque em `assets/servers/server_starcat_banner.jpg` etc. para embutir (senão baixa da internet).

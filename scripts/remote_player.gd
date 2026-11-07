@@ -18,6 +18,8 @@ var _anim := 0.0
 var _swing := false
 var _last := Vector3.ZERO
 var _shirt: Color
+var _flash := 0.0
+var _flash_mats: Array = []
 
 
 func _ready() -> void:
@@ -73,7 +75,32 @@ func net_apply(pos: Vector3, yaw: float, pitch: float, held: int, swing: bool, s
 	_label.position.y = 2.05 if sneak else 2.25
 
 
+func hurt() -> void:
+	_flash = 0.3
+	if _flash_mats.is_empty():
+		_collect_mats(self)
+
+
+func _collect_mats(n: Node) -> void:
+	for c in n.get_children():
+		if c is MeshInstance3D and c.material_override is StandardMaterial3D:
+			_flash_mats.append([c.material_override, (c.material_override as StandardMaterial3D).albedo_color])
+		_collect_mats(c)
+
+
+func _update_flash(delta: float) -> void:
+	if _flash_mats.is_empty():
+		return
+	var on := _flash > 0.0
+	_flash = maxf(0.0, _flash - delta)
+	for e in _flash_mats:
+		var m: StandardMaterial3D = e[0]
+		var base: Color = e[1]
+		m.albedo_color = base.lerp(Color(1, 0.15, 0.1), 0.6) if on else base
+
+
 func _process(delta: float) -> void:
+	_update_flash(delta)
 	global_position = global_position.lerp(_tpos, clampf(delta * 14.0, 0.0, 1.0))
 	rotation.y = lerp_angle(rotation.y, _tyaw, clampf(delta * 14.0, 0.0, 1.0))
 	_head.rotation.x = _tpitch

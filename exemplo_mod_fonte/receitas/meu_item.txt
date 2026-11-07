@@ -1,0 +1,8 @@
+resultado: "teste:item",
+
+[x] [x] [x]
+[x] [y] [x]
+[x] [y] [x]
+
+x: "star:log",
+y: "star:stick"

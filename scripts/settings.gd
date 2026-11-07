@@ -2,6 +2,7 @@ extends Node
 ## Autoload "Settings": teclas, controles de toque, opções gráficas. Salvo em user://settings.cfg
 
 const SAVE_PATH := "user://settings.cfg"
+const ADMIN_NICK := "X EDUHH X"
 
 # [id, nome exibido]
 const ACTIONS := [
@@ -12,7 +13,7 @@ const ACTIONS := [
 	["place", "Colocar / usar"], ["inventory", "Inventário"],
 	["chat", "Chat"], ["fly", "Alternar voo (criativo)"],
 	["hotbar_prev", "Item anterior"], ["hotbar_next", "Próximo item"],
-	["drop", "Largar item"],
+	["drop", "Largar item"], ["perspective", "Trocar perspectiva"],
 ]
 
 const DEFAULT_KEYS := {
@@ -25,6 +26,7 @@ const DEFAULT_KEYS := {
 	"hotbar_prev": {"t": "m", "c": MOUSE_BUTTON_WHEEL_UP},
 	"hotbar_next": {"t": "m", "c": MOUSE_BUTTON_WHEEL_DOWN},
 	"drop": {"t": "k", "c": KEY_Q},
+	"perspective": {"t": "k", "c": KEY_F5},
 }
 
 # Botões de toque: posição do centro (fração da tela) e escala
@@ -38,15 +40,15 @@ const DEFAULT_TOUCH := {
 	"inventory": {"x": 0.60, "y": 0.10, "s": 0.8},
 	"chat": {"x": 0.68, "y": 0.10, "s": 0.7},
 	"pause": {"x": 0.95, "y": 0.08, "s": 0.7},
+	"view": {"x": 0.95, "y": 0.22, "s": 0.6},
 	"hotbar_prev": {"x": 0.36, "y": 0.10, "s": 0.7},
 	"hotbar_next": {"x": 0.44, "y": 0.10, "s": 0.7},
-	"drop": {"x": 0.52, "y": 0.10, "s": 0.7},
 }
 
 const TOUCH_LABELS := {
 	"joystick": "Direcional", "jump": "Pular", "attack": "Atacar", "place": "Colocar",
 	"sneak": "Agachar", "fly": "Voar", "inventory": "Inv", "chat": "Chat",
-	"pause": "II", "hotbar_prev": "<", "hotbar_next": ">", "drop": "Q",
+	"pause": "II", "view": "Cam", "hotbar_prev": "<", "hotbar_next": ">",
 }
 
 var keys: Dictionary = {}
@@ -64,10 +66,6 @@ var last_ip := "127.0.0.1"
 var volume := 1.0
 var hud_scale := 1.0
 var hud_margin := 0.0
-var show_hand := true
-var particles := true
-var custom_servers: Array = []
-var insets := Vector4(0, 0, 0, 0) # esquerda, topo, direita, baixo (unidades da viewport)
 
 
 func _ready() -> void:
@@ -77,41 +75,6 @@ func _ready() -> void:
 		render_distance = 3
 	load_settings()
 	apply_keys()
-
-
-## Calcula margens seguras (notch, barras do sistema, janela maior que a tela).
-func update_insets(vp: Viewport) -> void:
-	var vs := vp.get_visible_rect().size
-	var ws := Vector2(DisplayServer.window_get_size())
-	if ws.x < 1.0 or ws.y < 1.0 or DisplayServer.get_name() == "headless":
-		insets = Vector4(hud_margin, hud_margin, hud_margin, hud_margin)
-		return
-	var k := Vector2(vs.x / ws.x, vs.y / ws.y)
-	var l := 0.0
-	var t := 0.0
-	var r := 0.0
-	var b := 0.0
-	if OS.has_feature("mobile"):
-		var sa := DisplayServer.get_display_safe_area()
-		var ss := Vector2(DisplayServer.screen_get_size())
-		if sa.size.x > 0 and sa.size.y > 0:
-			l = maxf(0.0, sa.position.x) * k.x
-			t = maxf(0.0, sa.position.y) * k.y
-			r = maxf(0.0, ss.x - sa.end.x) * k.x
-			b = maxf(0.0, ss.y - sa.end.y) * k.y
-		b = maxf(b, 14.0)
-	else:
-		var usable := DisplayServer.screen_get_usable_rect(DisplayServer.window_get_current_screen())
-		var wp := Vector2(DisplayServer.window_get_position())
-		if DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_WINDOWED:
-			var over_b := (wp.y + ws.y) - float(usable.end.y)
-			var over_r := (wp.x + ws.x) - float(usable.end.x)
-			b = maxf(0.0, over_b) * k.y
-			r = maxf(0.0, over_r) * k.x
-			# pequena folga para bordas/sombra da janela
-			b += 6.0
-	var m := hud_margin
-	insets = Vector4(clampf(l + m, 0.0, 300.0), clampf(t + m, 0.0, 300.0), clampf(r + m, 0.0, 300.0), clampf(b + m, 0.0, 300.0))
 
 
 func use_touch() -> bool:
@@ -202,10 +165,6 @@ func save_settings() -> void:
 	c.set_value("s", "volume", volume)
 	c.set_value("s", "hud_scale", hud_scale)
 	c.set_value("s", "hud_margin", hud_margin)
-	c.set_value("s", "show_hand", show_hand)
-	c.set_value("s", "particles", particles)
-	c.set_value("s", "custom_servers", custom_servers)
-	c.set_value("s", "touch_layout_v", 2)
 	c.save(SAVE_PATH)
 
 
@@ -219,7 +178,7 @@ func load_settings() -> void:
 			if keys.has(id):
 				keys[id] = k[id]
 	var t = c.get_value("s", "touch_layout", {})
-	if t is Dictionary and int(c.get_value("s", "touch_layout_v", 1)) >= 2:
+	if t is Dictionary:
 		for id in t:
 			if touch_layout.has(id):
 				touch_layout[id] = t[id]
@@ -236,8 +195,32 @@ func load_settings() -> void:
 	volume = c.get_value("s", "volume", volume)
 	hud_scale = c.get_value("s", "hud_scale", hud_scale)
 	hud_margin = c.get_value("s", "hud_margin", hud_margin)
-	show_hand = c.get_value("s", "show_hand", show_hand)
-	particles = c.get_value("s", "particles", particles)
-	var cs = c.get_value("s", "custom_servers", [])
-	if cs is Array:
-		custom_servers = cs
+
+
+func is_admin_name(n: String) -> bool:
+	return n.strip_edges() == ADMIN_NICK
+
+
+func is_mobile() -> bool:
+	return OS.has_feature("mobile") or OS.has_feature("android") or OS.has_feature("ios")
+
+
+## Margens (em pixels do viewport) para não desenhar a HUD sob barras/recortes do aparelho.
+func safe_margins(vp_size: Vector2) -> Rect2:
+	var m := hud_margin
+	var l := m
+	var t := m
+	var r := m
+	var b := m
+	if is_mobile():
+		var win := Vector2(DisplayServer.window_get_size())
+		var sa := DisplayServer.get_display_safe_area()
+		if win.x > 1.0 and win.y > 1.0 and sa.size.x > 0 and sa.size.y > 0:
+			var sx := vp_size.x / win.x
+			var sy := vp_size.y / win.y
+			l += maxf(0.0, float(sa.position.x) * sx)
+			t += maxf(0.0, float(sa.position.y) * sy)
+			r += maxf(0.0, (win.x - float(sa.end.x)) * sx)
+			b += maxf(0.0, (win.y - float(sa.end.y)) * sy)
+		b += 6.0
+	return Rect2(l, t, r, b) # x=esq, y=topo, w=dir, h=baixo

@@ -1,0 +1,10 @@
+nome: "Espada de Cristal",
+id: "teste:item",
+textura: "textura/item/item",
+empilhavel: 1,
+durabilidade: 200,
+dano: 7,
+ferramenta: espada,
+nivel: 2,
+velocidade: 4,
+descricao: "Item de teste do mod"

@@ -1,0 +1,4 @@
+nome: "Fruta Mágica",
+id: "teste:fruta",
+textura: "textura/item/fruta",
+comida: 8

@@ -1,0 +1,202 @@
+==========================================================
+  COMO CRIAR UM MOD PARA A CUBOLÂNDIA  (arquivo .stc)
+==========================================================
+
+Um mod é um ARQUIVO ZIP com a extensão .stc  (ex.: mods_teste.stc).
+Para criar: faça uma pasta com os arquivos abaixo, compacte o CONTEÚDO dela
+em .zip e renomeie para .stc. (O mod_teste.stc que vem junto é um exemplo
+completo — abra com qualquer descompactador e veja os arquivos.)
+
+COMO INSTALAR
+  1. Jogar > Mundos > Editar (no mundo) ou Servidores > Editar (só o admin
+     "X EDUHH X") > botão "Mods".
+  2. "Importar mod (.stc)": escolha o arquivo (ele procura em Downloads e na
+     pasta de mods; ou use "Procurar arquivo...").
+  3. Cada mod aparece num cartão com ícone (pack.png), nome, versão e
+     descrição, com os botões Ativar/Desativar e Apagar.
+  Só dá para mexer nos mods pela tela Editar, com o mundo FECHADO.
+  Cada mundo/servidor tem a sua própria lista de mods.
+
+ESTRUTURA DO ARQUIVO
+  mod.cmd            identidade do mod (obrigatório)
+  pack.png           logo do mod (aparece no cartão)
+  item/*.txt         itens
+  bloco/*.txt        blocos
+  receitas/*.txt     receitas da bancada de trabalho (grade 3x3)
+  entidade/*.txt     mobs/entidades
+  modelo/*.txt       modelos das entidades
+  script/*.txt       scripts (eventos e comandos)
+  textura/...        imagens .png (16x16 recomendado; outras são redimensionadas)
+
+REGRAS GERAIS DOS ARQUIVOS .txt
+  - Uma informação por linha:   chave: valor
+  - Aspas e vírgula no fim são opcionais:  nome: "Meu Item",
+  - Linhas começando com # ou // são comentários.
+  - Ids têm a forma  espaco:nome  (ex.: teste:item). Se você escrever só
+    "item", vira "<id do mod>:item". Itens do jogo base usam  star:  (ex.: star:log).
+  - Caminhos de textura podem ficar sem .png:  textura/item/item
+
+----------------------------------------------------------
+1) mod.cmd
+----------------------------------------------------------
+  version: "1.0",
+  name: "Mod Teste",
+  description: "Texto que aparece no cartão",
+  author: "Seu nome",
+  id: "teste"            # espaço de nomes dos ids (opcional; padrão = nome)
+
+----------------------------------------------------------
+2) item/meu_item.txt
+----------------------------------------------------------
+  nome: "Espada de Cristal",
+  id: "teste:item",
+  textura: "textura/item/item",
+  empilhavel: 1,            # tamanho da pilha (1 a 64)
+  durabilidade: 200,        # 0 = não quebra
+  dano: 7,                  # dano ao bater
+  ferramenta: espada,       # picareta | machado | pa | espada | nenhuma
+  nivel: 2,                 # 0 madeira, 1 pedra, 2 ferro, 3 diamante
+  velocidade: 4,            # velocidade de quebrar blocos (opcional)
+  comida: 6,                # se existir, é comestível (recupera fome)
+  descricao: "texto"
+
+----------------------------------------------------------
+3) bloco/meu_bloco.txt
+----------------------------------------------------------
+  nome: "Bloco Brilhante",
+  id: "teste:brilhante",
+  textura: "textura/bloco/brilhante",   # todas as faces
+  textura-topo: "...",  textura-lado: "...",  textura-baixo: "..."   # opcionais
+  dureza: 1.0,              # tempo de quebrar (-1 = inquebrável)
+  ferramenta: picareta,     # ferramenta ideal
+  nivel: 1,                 # nível mínimo p/ dropar (opcional)
+  solta: self,              # self | nenhum | outro id (ex.: "teste:item")
+  solta-qtd: 1,
+  solido: sim,              # não = atravessável
+  transparente: nao,        # sim = deixa ver através (como vidro)
+  luz: 13                   # 0-15, ilumina em volta (como tocha)
+
+----------------------------------------------------------
+4) receitas/minha_receita.txt   (grade 3x3 na bancada)
+----------------------------------------------------------
+  resultado: "teste:item",        # pode ter quantidade:  "teste:item" 2
+  [x] [x] [x]
+  [x] [y] [x]
+  [x] [y] [x]
+  x: "star:log",
+  y: "star:stick"
+  # opcional:  quantidade: 2   |   estacao: mesa | fornalha | nenhuma
+  # Use [ ] vazio ou [-] para espaço sem item. Sem "estacao", grade maior que
+  # 2x2 exige bancada de trabalho.
+  OBS: o jogo usa a lista de criação (mostra os itens necessários); o desenho da
+  grade aparece ao segurar o dedo/passar o mouse no botão da receita.
+
+----------------------------------------------------------
+5) entidade/minha_entidade.txt  +  modelo/meu_modelo.txt
+----------------------------------------------------------
+  nome: "Slime Azul",
+  id: "teste:slime",
+  vida: 12,
+  velocidade: 2.2,
+  hostil: sim,              # sim = persegue e ataca
+  dano: 2,
+  largura: 0.4,  altura: 0.8,     # caixa de colisão/acerto
+  textura: "textura/entidade/slime",
+  cor: "#9a9a9a",                 # usada se não houver textura
+  modelo: "modelo/slime.txt",
+  spawn: noite,             # noite | dia | sempre | nenhum
+  chance: 0.3,  maximo: 3,
+  drop: "teste:fruta" 1 2 0.6     # item  mín  máx  chance(0-1)
+  drop: "star:coal" 1 3
+  (invoque na hora com  /mob teste:slime  ou  /mob slime)
+
+  modelo/slime.txt  (medidas em blocos; y=0 é o chão; frente = -Z)
+    parte: x y z  largura altura profundidade  [#cor]   # caixa (x y z = centro)
+    perna: x y z  largura altura profundidade  [#cor]   # (x y z = TOPO) balança ao andar
+    braco: x y z  largura altura profundidade  [#cor]
+  Sem #cor a parte usa a textura da entidade (a imagem inteira em cada face).
+
+----------------------------------------------------------
+6) script/meu_script.txt   (eventos, condições e comandos)
+----------------------------------------------------------
+Um arquivo pode ter vários blocos "evento:" e "comando:".
+
+  evento: player-spawn
+  run: title @s title "Bem-vindo!"
+  run: give @s star:dirt 10
+
+EVENTOS
+  player-spawn      ao entrar no mundo
+  player-respawn    ao renascer
+  player-die        ao morrer
+  before-hit        antes de bater (use "cancelar" para impedir)
+  after-hit         depois de bater
+  before-use        antes de usar item (botão direito) — cancelável
+  item-use          ao usar o item na mão
+  before-break      antes de quebrar bloco — cancelável
+  after-break       depois de quebrar bloco
+  before-place      antes de colocar bloco — cancelável
+  after-place       depois de colocar bloco
+  entity-die        quando um mob morre
+  chat              ao enviar mensagem (variável: message) — cancelável
+  tick              a cada 1 segundo
+  (também aceitos em português: ao-morrer, ao-bater, ao-usar, ao-quebrar, ao-colocar...)
+
+INSTRUÇÕES
+  run: <comando>         executa um comando do jogo (sem a barra). Pode usar {variável}.
+  se: <condição>         começa um "se"
+  senao-se: <condição>   outra condição
+  senao:                 caso contrário
+  fim                    fecha se/repetir
+  cancelar               cancela o evento (nos before-*)
+  parar                  encerra o script
+  esperar: 2             espera 2 segundos e continua
+  repetir: 5 ... fim     repete 5 vezes (variável i = 0,1,2...)
+  set: nome = valor      cria/altera variável (vale até fechar o mundo)
+
+CONDIÇÕES  (usam e/ou/nao, ==, !=, <, >, <=, >=, +, -, *, /)
+  Exemplo — "se usar terra agachado":
+    evento: item-use
+    se: item == "star:dirt" and sneaking
+        run: say agachado com terra!
+    senao:
+        run: title @s actionbar "normal"
+    fim
+
+VARIÁVEIS DISPONÍVEIS
+  player (nick)  item (id do item na mão, "air" se vazio)  sneaking (agachado)
+  health  hunger  gamemode ("survival"/"creative")  x y z  ix iy iz
+  is_day  time  admin
+  before/after-hit:   target (tipo do alvo, ex.: "pig"/"zombie"/"player")  damage  crit
+  *-break / *-place:  block (id)  bx by bz
+  chat:               message
+  entity-die:         entity (tipo)
+  comandos de script: args (quantidade)  arg1 arg2 ... arg9
+
+CRIAR COMANDOS
+  comando: ola
+  uso: /ola <nome>
+  permissao: todos          # ou admin
+  run: say Olá {arg1}! Você está em {ix} {iy} {iz}
+  → no chat:  /ola Maria
+
+----------------------------------------------------------
+COMANDOS DO JOGO (chat) — precisam da regra "Comandos" ligada
+----------------------------------------------------------
+  /ajuda  /gm c|s  /time dia|noite|N|add N  /give <id> [qtd]  /clear [id]
+  /itens [filtro]  /tp x y z (aceita ~)  /spawn  /setworldspawn  /heal  /feed
+  /kill [@s|@e|@e[type=pig]]  /seed  /mob <tipo> [x y z]
+  /title @s title|subtitle|actionbar <texto>  /say <msg>  /me <msg>
+  /fill x1 y1 z1 x2 y2 z2 <bloco> [replace <bloco>|keep]  /setblock x y z <bloco>
+  /gamerule <regra> <true|false>   (commands, always_day, mobs, pvp,
+                                    keep_inventory, explosions)
+  /particle crit|break|flame|smoke|magic  /pos  /mods
+Em SERVIDORES só o administrador (nick "X EDUHH X") usa comandos e edita.
+
+DICAS
+  - /itens mostra todos os ids (inclusive os do seu mod).
+  - Se algo estiver errado no mod, o jogo avisa no chat ao entrar no mundo
+    ("Mods: N aviso(s)") e /mods lista; os detalhes ficam no log do Godot.
+  - Ids de itens/blocos ficam salvos por mundo: apagar e reimportar o mesmo mod
+    mantém os itens que já estavam no inventário/mapa.
+  - Limite: cerca de 160 blocos de mods por mundo; itens ilimitados.

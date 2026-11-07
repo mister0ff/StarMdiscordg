@@ -1,0 +1,15 @@
+nome: "Slime Azul",
+id: "teste:slime",
+vida: 12,
+velocidade: 2.2,
+hostil: sim,
+dano: 2,
+largura: 0.4,
+altura: 0.8,
+textura: "textura/entidade/slime",
+modelo: "modelo/slime.txt",
+spawn: noite,
+chance: 0.3,
+maximo: 3,
+drop: "teste:fruta" 1 2 0.6
+drop: "star:coal" 1 3

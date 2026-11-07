@@ -21,7 +21,7 @@ const HOLD := ["jump", "attack", "place", "sneak"]
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
-	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	set_anchors_preset(Control.PRESET_FULL_RECT)
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_font = ThemeDB.fallback_font
 	visible = false
@@ -31,7 +31,7 @@ func _ready() -> void:
 func _build_panel() -> void:
 	_panel = PanelContainer.new()
 	_panel.visible = false
-	_panel.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
+	_panel.set_anchors_preset(Control.PRESET_CENTER_TOP)
 	_panel.position.y = 10
 	add_child(_panel)
 	var hb := HBoxContainer.new()
@@ -96,14 +96,21 @@ func _scale_sel(delta: float) -> void:
 	queue_redraw()
 
 
+func _vs() -> Vector2:
+	return get_viewport_rect().size
+
+
+## área útil (descontando margens de segurança): x=esq, y=topo, w=largura, h=altura
+func _area() -> Rect2:
+	var vs := _vs()
+	var mg := Settings.safe_margins(vs)
+	return Rect2(mg.position.x, mg.position.y, maxf(100.0, vs.x - mg.position.x - mg.size.x), maxf(100.0, vs.y - mg.position.y - mg.size.y))
+
+
 func _center(id: String) -> Vector2:
 	var L: Dictionary = Settings.touch_layout[id]
-	var vs := get_viewport_rect().size
-	var i := Settings.insets
-	var ar := Rect2(i.x, i.y, maxf(100.0, vs.x - i.x - i.z), maxf(100.0, vs.y - i.y - i.w))
-	var r := _radius(id)
-	var c := Vector2(ar.position.x + L["x"] * ar.size.x, ar.position.y + L["y"] * ar.size.y)
-	return Vector2(clampf(c.x, ar.position.x + r, ar.end.x - r), clampf(c.y, ar.position.y + r, ar.end.y - r))
+	var a := _area()
+	return Vector2(a.position.x + float(L["x"]) * a.size.x, a.position.y + float(L["y"]) * a.size.y)
 
 
 func _radius(id: String) -> float:
@@ -217,6 +224,8 @@ func _press(id: String) -> void:
 				main.chat_ui.open()
 			"pause":
 				main.pause_game()
+			"view":
+				pl.cycle_view()
 			"hotbar_prev":
 				pl.selected = (pl.selected + 8) % 9
 			"hotbar_next":
@@ -254,10 +263,9 @@ func _edit_input(event: InputEvent) -> void:
 		queue_redraw()
 	elif event is InputEventMouseMotion and _drag_btn != "":
 		var L: Dictionary = Settings.touch_layout[_drag_btn]
-		var vs := get_viewport_rect().size
-		var i := Settings.insets
-		L["x"] = clampf((event.position.x - i.x) / maxf(1.0, vs.x - i.x - i.z), 0.03, 0.97)
-		L["y"] = clampf((event.position.y - i.y) / maxf(1.0, vs.y - i.y - i.w), 0.05, 0.95)
+		var a := _area()
+		L["x"] = clampf((event.position.x - a.position.x) / a.size.x, 0.03, 0.97)
+		L["y"] = clampf((event.position.y - a.position.y) / a.size.y, 0.05, 0.95)
 		queue_redraw()
 
 
@@ -266,7 +274,7 @@ func _draw() -> void:
 	if not visible:
 		return
 	if edit_mode:
-		draw_rect(Rect2(Vector2.ZERO, get_viewport_rect().size), Color(0.05, 0.07, 0.12, 0.92))
+		draw_rect(Rect2(Vector2.ZERO, _vs()), Color(0.05, 0.07, 0.12, 0.92))
 	var alpha := 0.9 if edit_mode else Settings.touch_opacity
 	for id in Settings.touch_layout:
 		if id == "fly" and not edit_mode and not main.creative_mode:

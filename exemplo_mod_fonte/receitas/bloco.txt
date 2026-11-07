@@ -1,0 +1,6 @@
+resultado: "teste:brilhante" 2
+estacao: mesa
+[a] [b]
+[b] [a]
+a: "star:coal",
+b: "star:cobble"

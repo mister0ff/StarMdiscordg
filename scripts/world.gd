@@ -14,8 +14,11 @@ uniform vec3 tint = vec3(1.0);
 void fragment() {
 	vec4 t = texture(atlas, UV);
 	if (t.a < 0.5) discard;
-	float l = mix(0.14, 1.0, daylight);
-	ALBEDO = t.rgb * COLOR.rgb * l * mix(vec3(0.75, 0.8, 1.0), tint, daylight);
+	float dl = mix(0.14, 1.0, daylight);
+	float bl = COLOR.a * 0.95;
+	float l = max(dl, bl);
+	vec3 warm = mix(vec3(1.0), vec3(1.0, 0.86, 0.62), clamp(bl - dl, 0.0, 1.0));
+	ALBEDO = t.rgb * COLOR.rgb * l * mix(vec3(0.75, 0.8, 1.0), tint, daylight) * warm;
 }
 """
 const WATER_SHADER := """
@@ -62,13 +65,16 @@ class Chunk:
 
 
 var seed_val := 0
+var flat := false
+var lights: Dictionary = {} # Vector3i -> nível de luz (tochas e blocos de mods)
+var chests: Dictionary = {} # Vector3i -> Array de 27 espaços
 var chunks: Dictionary = {}
 var edits: Dictionary = {} # Vector2i -> { idx:int -> id:int }
 var centers: Array = [] # Array[Vector3] (posições dos jogadores)
 var center_radius: Array = []
 var _gen_queue: Array = []
 var _dirty: Dictionary = {}
-var mat_solid: ShaderMaterial
+var _mat_solid: ShaderMaterial
 var _mat_water: ShaderMaterial
 var _noise_h := FastNoiseLite.new()
 var _noise_d := FastNoiseLite.new()
@@ -76,38 +82,54 @@ var _noise_b := FastNoiseLite.new()
 var _noise_c := FastNoiseLite.new()
 var _opaque := PackedByteArray()
 var _solid := PackedByteArray()
+var _known := PackedByteArray()
 var _face_uv := PackedVector2Array()
 var _uv_size := Vector2.ZERO
 var daylight := 1.0
 
 
 func _ready() -> void:
+	var sh := Shader.new()
+	sh.code = DAY_SHADER
+	_mat_solid = ShaderMaterial.new()
+	_mat_solid.shader = sh
+	var sw := Shader.new()
+	sw.code = WATER_SHADER
+	_mat_water = ShaderMaterial.new()
+	_mat_water.shader = sw
+	refresh_tables()
+
+
+## Recalcula tabelas de blocos/UV/atlas (chamar depois de carregar ou descarregar mods).
+func refresh_tables() -> void:
 	_opaque.resize(256)
 	_solid.resize(256)
-	for id in range(1, Blocks.MAX_BLOCK + 1):
+	_known.resize(256)
+	_opaque.fill(0)
+	_solid.fill(0)
+	_known.fill(0)
+	_face_uv.resize(256 * 6)
+	for k in Blocks.defs:
+		var id: int = k
+		if id <= 0 or id > 255 or not bool(Blocks.defs[id]["block"]):
+			continue
+		_known[id] = 1
 		_opaque[id] = 1 if Blocks.is_opaque(id) else 0
 		_solid[id] = 1 if Blocks.is_solid(id) else 0
-	_face_uv.resize(256 * 6)
-	for id in range(1, Blocks.MAX_BLOCK + 1):
 		var tiles: Array = Blocks.defs[id]["tiles"]
 		for f in 6:
 			var tn: String = tiles[0] if f == 2 else (tiles[2] if f == 3 else tiles[1])
 			_face_uv[id * 6 + f] = Blocks.tile_uv(tn)
 	_uv_size = Vector2(1.0 / Blocks.ATLAS_COLS, 1.0 / Blocks._atlas_rows())
-	var sh := Shader.new()
-	sh.code = DAY_SHADER
-	mat_solid = ShaderMaterial.new()
-	mat_solid.shader = sh
-	mat_solid.set_shader_parameter("atlas", Blocks.atlas_tex)
-	var sw := Shader.new()
-	sw.code = WATER_SHADER
-	_mat_water = ShaderMaterial.new()
-	_mat_water.shader = sw
+	_mat_solid.set_shader_parameter("atlas", Blocks.atlas_tex)
 	_mat_water.set_shader_parameter("atlas", Blocks.atlas_tex)
+	for q in chunks:
+		_dirty[q] = true
 
 
-func setup(new_seed: int) -> void:
+func setup(new_seed: int, template := "normal") -> void:
 	seed_val = new_seed
+	flat = template == "flat"
 	_noise_h.seed = new_seed
 	_noise_h.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
 	_noise_h.frequency = 0.007
@@ -131,17 +153,18 @@ func clear_world() -> void:
 	_gen_queue.clear()
 	_dirty.clear()
 	edits.clear()
-	_centers_sig = ""
+	lights.clear()
+	chests.clear()
 
 
 func set_daylight(v: float) -> void:
 	daylight = v
-	mat_solid.set_shader_parameter("daylight", v)
+	_mat_solid.set_shader_parameter("daylight", v)
 	_mat_water.set_shader_parameter("daylight", v)
 	var warm := Vector3(1.0, 1.0, 1.0)
 	if v < 0.6 and v > 0.2:
 		warm = Vector3(1.0, 0.8, 0.65)
-	mat_solid.set_shader_parameter("tint", warm)
+	_mat_solid.set_shader_parameter("tint", warm)
 
 
 # ------------------------------------------------------------ ruído e terreno
@@ -153,6 +176,8 @@ func _rand01(x: int, y: int, z: int) -> float:
 
 
 func height_at(wx: int, wz: int) -> int:
+	if flat:
+		return SEA + 2
 	var n: float = _noise_h.get_noise_2d(wx, wz)
 	var m: float = _noise_b.get_noise_2d(wx, wz)
 	var h: float = SEA + 4.0 + n * 13.0 + _noise_d.get_noise_2d(wx, wz) * 2.5
@@ -166,6 +191,8 @@ func is_desert(wx: int, wz: int) -> bool:
 
 
 func _surface_block(wx: int, wz: int, h: int) -> int:
+	if flat:
+		return Blocks.GRASS
 	if h <= SEA + 1:
 		return Blocks.SAND
 	if is_desert(wx, wz):
@@ -204,7 +231,9 @@ func _gen_chunk(pos: Vector2i) -> void:
 					id = sub
 				else:
 					id = Blocks.STONE
-					if y > 2 and y < h - 4 and _noise_c.get_noise_3d(wx, y * 1.4, wz) > 0.52:
+					if flat:
+						pass
+					elif y > 2 and y < h - 4 and _noise_c.get_noise_3d(wx, y * 1.4, wz) > 0.52:
 						id = Blocks.AIR
 					else:
 						var r := _rand01(wx, y, wz)
@@ -221,7 +250,8 @@ func _gen_chunk(pos: Vector2i) -> void:
 				c.blocks[_idx(x, y, z)] = Blocks.WATER
 			top = maxi(top, maxi(h + 1, SEA + 1) if h < SEA else h + 1)
 	# árvores (inclui as que nascem em chunks vizinhos)
-	for tz in range(-2, CS + 2):
+	var tree_r: Array = range(-2, CS + 2) if not flat else []
+	for tz in tree_r:
 		for tx in range(-2, CS + 2):
 			var wx: int = ox + tx
 			var wz: int = oz + tz
@@ -285,7 +315,7 @@ func is_loaded(wx: int, wz: int) -> bool:
 	return c != null and c.meshed
 
 
-func set_block(wx: int, y: int, wz: int, id: int, rebuild := true) -> bool:
+func set_block(wx: int, y: int, wz: int, id: int, immediate := true) -> bool:
 	if y < 0 or y >= CH:
 		return false
 	var cp := Vector2i(floori(wx / float(CS)), floori(wz / float(CS)))
@@ -295,16 +325,19 @@ func set_block(wx: int, y: int, wz: int, id: int, rebuild := true) -> bool:
 	if not edits.has(cp):
 		edits[cp] = {}
 	edits[cp][i] = id
+	var light_changed := _update_light(Vector3i(wx, y, wz), id)
 	var c: Chunk = chunks.get(cp)
 	if c == null:
 		return true
 	c.blocks[i] = id
 	if y + 1 > c.top:
 		c.top = mini(CH, y + 2)
-	if rebuild:
+	if immediate:
 		_build_mesh(c)
 	else:
 		_dirty[cp] = true
+	if light_changed:
+		_mark_light_area(wx, wz)
 	if lx == 0:
 		_mark(cp + Vector2i(-1, 0))
 	if lx == CS - 1:
@@ -319,6 +352,75 @@ func set_block(wx: int, y: int, wz: int, id: int, rebuild := true) -> bool:
 func _mark(p: Vector2i) -> void:
 	if chunks.has(p):
 		_dirty[p] = true
+
+
+func _update_light(key: Vector3i, id: int) -> bool:
+	var lvl := 0
+	if Blocks.defs.has(id):
+		lvl = int(Blocks.defs[id].get("light", 0))
+	if lvl > 0:
+		lights[key] = lvl
+		return true
+	if lights.has(key):
+		lights.erase(key)
+		return true
+	return false
+
+
+func _mark_light_area(wx: int, wz: int) -> void:
+	var c0 := Vector2i(floori((wx - 10) / float(CS)), floori((wz - 10) / float(CS)))
+	var c1 := Vector2i(floori((wx + 10) / float(CS)), floori((wz + 10) / float(CS)))
+	for cx in range(c0.x, c1.x + 1):
+		for cz in range(c0.y, c1.y + 1):
+			_mark(Vector2i(cx, cz))
+
+
+func _vlight(near: Array, p: Vector3) -> float:
+	var best := 0.0
+	for l in near:
+		var lp: Vector3 = l[0]
+		var lv: float = l[1]
+		var r := lv * 0.7
+		var d := p.distance_to(lp)
+		if d < r:
+			best = maxf(best, (1.0 - d / r) * (lv / 15.0) * 1.15)
+	return clampf(best, 0.0, 1.0)
+
+
+func _add_torch(x: int, y: int, z: int, base_uv: Vector2, verts: PackedVector3Array, uvs: PackedVector2Array, cols: PackedColorArray, idx: PackedInt32Array) -> void:
+	var x0 := x + 0.4375
+	var z0 := z + 0.4375
+	var u0 := 7.0 / 16.0
+	var u1 := 9.0 / 16.0
+	for f in [0, 1, 2, 4, 5]:
+		var fv: Array = FACE_V[f]
+		var fu: Array = FACE_UV[f]
+		var v0 := 3.0 / 16.0
+		var v1 := 1.0
+		if f == 2:
+			v1 = 5.0 / 16.0
+		var b := verts.size()
+		for k in 4:
+			var v: Vector3 = fv[k]
+			verts.append(Vector3(x0 + v.x * 0.125, y + v.y * 0.8125, z0 + v.z * 0.125))
+			var lu: Vector2 = fu[k]
+			uvs.append(base_uv + Vector2((u0 + lu.x * (u1 - u0)) * _uv_size.x, (v0 + lu.y * (v1 - v0)) * _uv_size.y))
+			cols.append(Color(1, 1, 1, 1))
+		idx.append_array([b, b + 1, b + 2, b, b + 2, b + 3])
+
+
+func clear_edits_lights() -> void:
+	lights.clear()
+	for cp in edits:
+		for i in edits[cp]:
+			var id: int = edits[cp][i]
+			if Blocks.defs.has(id) and int(Blocks.defs[id].get("light", 0)) > 0:
+				var li: int = i
+				var lx := li % CS
+				var lz := (li / CS) % CS
+				var ly := li / (CS * CS)
+				var cpv: Vector2i = cp
+				lights[Vector3i(cpv.x * CS + lx, ly, cpv.y * CS + lz)] = int(Blocks.defs[id]["light"])
 
 
 func surface_y(wx: int, wz: int) -> int:
@@ -353,7 +455,7 @@ func explode(center: Vector3, radius: float) -> void:
 					continue
 				var id := get_block(cx + dx, cy + dy, cz + dz)
 				if id != Blocks.AIR and id != Blocks.BEDROCK and id != Blocks.WATER:
-					set_block(cx + dx, cy + dy, cz + dz, Blocks.AIR, false)
+					set_block(cx + dx, cy + dy, cz + dz, Blocks.AIR)
 
 
 # ------------------------------------------------------------ raycast voxel (DDA)
@@ -402,19 +504,9 @@ func raycast(origin: Vector3, dir: Vector3, max_dist: float) -> Dictionary:
 
 
 # ------------------------------------------------------------ streaming
-var _centers_sig := ""
-
-
 func set_centers(pts: Array, radii: Array) -> void:
 	centers = pts
 	center_radius = radii
-	var sig := ""
-	for k in pts.size():
-		var pp: Vector3 = pts[k]
-		sig += "%d,%d,%d;" % [floori(pp.x / CS), floori(pp.z / CS), radii[k]]
-	if sig == _centers_sig:
-		return
-	_centers_sig = sig
 	var need: Dictionary = {}
 	for k in pts.size():
 		var p: Vector3 = pts[k]
@@ -456,7 +548,7 @@ func pending_work() -> int:
 
 func _process(_dt: float) -> void:
 	var t0 := Time.get_ticks_usec()
-	while Time.get_ticks_usec() - t0 < 5000:
+	while Time.get_ticks_usec() - t0 < 7000:
 		if not _step():
 			break
 
@@ -499,6 +591,12 @@ func _build_mesh(c: Chunk) -> void:
 	var wcols := PackedColorArray()
 	var widx := PackedInt32Array()
 	var col_faces := PackedVector3Array()
+	var near: Array = []
+	if not lights.is_empty():
+		for lk0 in lights:
+			var lk: Vector3i = lk0
+			if lk.x >= ox - 10 and lk.x < ox + CS + 10 and lk.z >= oz - 10 and lk.z < oz + CS + 10:
+				near.append([Vector3(lk.x + 0.5, lk.y + 0.5, lk.z + 0.5), float(lights[lk0])])
 	var e := 0.0006
 	var su := _uv_size.x - 2.0 * e
 	var sv := _uv_size.y - 2.0 * e
@@ -506,7 +604,10 @@ func _build_mesh(c: Chunk) -> void:
 		for z in CS:
 			for x in CS:
 				var id: int = bl[x + z * CS + y * CS * CS]
-				if id == 0:
+				if id == 0 or _known[id] == 0:
+					continue
+				if id == Blocks.TORCH:
+					_add_torch(x, y, z, _face_uv[id * 6 + 1], verts, uvs, cols, idx)
 					continue
 				var is_water := id == Blocks.WATER
 				var lower_top := false
@@ -560,7 +661,10 @@ func _build_mesh(c: Chunk) -> void:
 								verts.append(Vector3(x + v.x, y + v.y, z + v.z))
 								var lu: Vector2 = fu[k]
 								uvs.append(base_uv + Vector2(e + lu.x * su, e + lu.y * sv))
-								cols.append(color)
+								var vl := 0.0
+								if not near.is_empty():
+									vl = _vlight(near, Vector3(ox + x + v.x, y + v.y, oz + z + v.z))
+								cols.append(Color(shade, shade, shade, vl))
 							idx.append_array([b, b + 1, b + 2, b, b + 2, b + 3])
 					if colf:
 						var p0 := Vector3(x, y, z)
@@ -579,7 +683,7 @@ func _build_mesh(c: Chunk) -> void:
 		arr[Mesh.ARRAY_COLOR] = cols
 		arr[Mesh.ARRAY_INDEX] = idx
 		mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
-		mesh.surface_set_material(si, mat_solid)
+		mesh.surface_set_material(si, _mat_solid)
 		si += 1
 	if wverts.size() > 0:
 		var arr2 := []
@@ -617,3 +721,4 @@ func import_edits(d: Dictionary) -> void:
 				c.blocks[i] = d[cp][i]
 				c.top = maxi(c.top, mini(CH, int(i) / (CS * CS) + 2))
 			_dirty[cp] = true
+	clear_edits_lights()

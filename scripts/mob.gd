@@ -42,12 +42,32 @@ var _last_pos := Vector3.ZERO
 var _speed_now := 0.0
 
 
+static func has_type(k: String) -> bool:
+	return TYPES.has(k) or Mods.entities.has(k)
+
+
+static func all_kinds() -> Array:
+	var out: Array = TYPES.keys()
+	for k in Mods.entities:
+		out.append(String(k))
+	return out
+
+
+static func type_def(k: String) -> Dictionary:
+	if TYPES.has(k):
+		return TYPES[k]
+	if Mods.entities.has(k):
+		var e: Dictionary = Mods.entities[k]
+		return {"hp": e["hp"], "speed": e["speed"], "hostile": e["hostile"], "w": e["w"], "h": e["h"], "damage": e["damage"]}
+	return {"hp": 10.0, "speed": 1.5, "hostile": false, "w": 0.4, "h": 1.0}
+
+
 func setup(k: String) -> void:
 	kind = k
-	var d: Dictionary = TYPES[k]
+	var d: Dictionary = type_def(k)
 	hp = d["hp"]
 	hit_w = d["w"]
-	hit_h = d["h"]
+	hit_h = maxf(float(d["h"]), float(d["w"]) * 2.0 + 0.05)
 	hostile = d["hostile"]
 
 
@@ -99,7 +119,36 @@ func _eyes(head: Node3D, z: float, y := 0.04, gap := 0.12) -> void:
 		head.add_child(e)
 
 
+func _build_custom() -> void:
+	var d: Dictionary = Mods.entities[kind]
+	var tex = d["texture"]
+	for part in d["parts"]:
+		var pd: Dictionary = part
+		var col: Color = d["color"]
+		var textured := false
+		if pd["color"] != null:
+			col = pd["color"]
+		elif tex != null:
+			col = Color(1, 1, 1)
+			textured = true
+		var n0 := _mats.size()
+		if pd["kind"] == "part":
+			_part(pd["size"], pd["pos"], col)
+		else:
+			_leg(pd["size"], pd["pos"], col)
+		if textured:
+			var m := _mats[n0] as StandardMaterial3D
+			m.albedo_texture = tex
+			m.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+
+
 func _build_model() -> void:
+	if Mods.entities.has(kind):
+		_build_custom()
+		return
+	if not TYPES.has(kind):
+		_part(Vector3(0.6, 0.6, 0.6), Vector3(0, 0.3, 0), Color(0.55, 0.55, 0.55))
+		return
 	match kind:
 		"pig":
 			var pink := Color(0.93, 0.66, 0.66)
@@ -168,7 +217,7 @@ func _physics_process(delta: float) -> void:
 	_atk_cd = maxf(0.0, _atk_cd - delta)
 	_flee = maxf(0.0, _flee - delta)
 
-	var d: Dictionary = TYPES[kind]
+	var d: Dictionary = type_def(kind)
 	var speed: float = d["speed"]
 	var tgt := _nearest_player()
 	var want := Vector3.ZERO
@@ -210,6 +259,11 @@ func _physics_process(delta: float) -> void:
 					want = dn * speed
 					if dist < 2.8:
 						_fuse = 0.0
+			_:
+				want = dn * speed
+				if dist < 1.5 and absf(tgt["pos"].y - global_position.y) < 1.8 and _atk_cd <= 0.0:
+					_atk_cd = 1.0
+					game.damage_player(tgt["id"], float(d.get("damage", 2.0)), dn * 6.0)
 	else:
 		_wander_t -= delta
 		if _wander_t <= 0.0:
@@ -324,7 +378,19 @@ func net_state() -> Array:
 	return [net_id, kind, global_position, _model.rotation.y, hp, _fuse >= 0.0]
 
 
+func _custom_drops() -> Array:
+	var out: Array = []
+	for dr in Mods.entities[kind]["drops"]:
+		if randf() <= float(dr["chance"]):
+			var id := Blocks.id_from_string(String(dr["item"]))
+			if id != 0:
+				out.append([id, randi_range(int(dr["min"]), int(dr["max"]))])
+	return out
+
+
 func drops() -> Array:
+	if Mods.entities.has(kind):
+		return _custom_drops()
 	var out: Array = []
 	match kind:
 		"pig":

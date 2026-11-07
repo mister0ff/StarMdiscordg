@@ -1,0 +1,30 @@
+evento: player-spawn
+run: title @s title "Bem-vindo!"
+run: title @s subtitle "Mod Teste ativo"
+run: give @s star:dirt 10
+
+evento: item-use
+se: item == "star:dirt" and sneaking
+    run: say {player} usou terra agachado!
+senao-se: item == "teste:fruta"
+    run: title @s actionbar "Hmm, que fruta mágica!"
+fim
+
+evento: before-hit
+se: target == "pig"
+    cancelar
+    run: title @s actionbar "Não bata no porquinho!"
+fim
+
+evento: player-die
+run: say {player} morreu... F
+
+comando: ola
+uso: /ola <nome>
+run: say Olá {arg1}! Você está em {ix} {iy} {iz}
+
+comando: curar
+permissao: todos
+set: cura = 20
+run: heal
+run: title @s actionbar "Curado!"

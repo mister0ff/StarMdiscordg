@@ -82,7 +82,7 @@ func take_from(i: int, n := 1) -> void:
 
 func use_durability(i: int, amount := 1) -> bool:
 	## devolve true se a ferramenta quebrou
-	if slots[i] == null or not Blocks.is_tool(slots[i][0]):
+	if slots[i] == null or not Blocks.has_dur(slots[i][0]):
 		return false
 	slots[i][2] -= amount
 	if slots[i][2] <= 0:
@@ -137,13 +137,22 @@ func from_array(a: Array) -> void:
 	changed.emit()
 
 
-## Quanto cabe de id (sem alterar).
-func room_for(id: int) -> int:
-	var maxs := Blocks.stack_of(id)
-	var n := 0
-	for i in SIZE:
-		if slots[i] == null:
-			n += maxs
-		elif slots[i][0] == id:
-			n += maxs - slots[i][1]
-	return n
+## Receitas possíveis agora. st = estações disponíveis perto (0 nada, 1 mesa, 2 fornalha)
+func can_craft(r: Dictionary, near_table: bool, near_furnace: bool) -> bool:
+	if r["st"] == 1 and not near_table:
+		return false
+	if r["st"] == 2 and not near_furnace:
+		return false
+	for id in r["in"]:
+		if count_of(id) < r["in"][id]:
+			return false
+	return true
+
+
+func craft(r: Dictionary, near_table: bool, near_furnace: bool) -> bool:
+	if not can_craft(r, near_table, near_furnace):
+		return false
+	for id in r["in"]:
+		remove_id(id, r["in"][id])
+	add(r["out"], r["n"])
+	return true

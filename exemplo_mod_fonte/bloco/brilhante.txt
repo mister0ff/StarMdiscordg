@@ -1,0 +1,7 @@
+nome: "Bloco Brilhante",
+id: "teste:brilhante",
+textura: "textura/bloco/brilhante",
+dureza: 1.0,
+ferramenta: picareta,
+solta: self,
+luz: 13

@@ -5,7 +5,7 @@ extends CharacterBody3D
 signal died
 signal damaged
 signal station_requested
-signal use_block(pos: Vector3i, id: int)
+signal chest_requested(pos: Vector3i)
 
 const GRAVITY := 26.0
 const JUMP_V := 8.4
@@ -27,6 +27,7 @@ var frozen := true
 var dead := false
 var head: Node3D
 var cam: Camera3D
+var hand: Sprite3D
 var outline: MeshInstance3D
 var crack: MeshInstance3D
 var target: Dictionary = {}
@@ -48,10 +49,17 @@ var _hunger_t := 0.0
 var _starve_t := 0.0
 var _drown_t := 0.0
 var _swing := 0.0
-var _chip_t := 0.0
+var _hand_id := -1
 var _sync_t := 0.0
 var _sprinting := false
 var _in_water := false
+var view := 0 # 0 = 1ª pessoa, 1 = câmera atrás ("3ª pessoa"), 2 = câmera na frente ("2ª pessoa")
+var avatar: AvatarModel
+var arm: MeshInstance3D
+var _real_mouse := false
+var _m_attack := false
+var _m_place := false
+var _prev_swing := 0.0
 
 
 func _ready() -> void:
@@ -74,6 +82,24 @@ func _ready() -> void:
 	cam.far = 220.0
 	cam.current = true
 	head.add_child(cam)
+	hand = Sprite3D.new()
+	hand.pixel_size = 0.028
+	hand.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	hand.shaded = false
+	hand.no_depth_test = true
+	hand.render_priority = 10
+	hand.position = Vector3(0.42, -0.32, -0.75)
+	hand.rotation_degrees = Vector3(0, -20, 8)
+	cam.add_child(hand)
+	arm = Util.make_box(Vector3(0.17, 0.17, 0.62), Color(0.85, 0.65, 0.5), Vector3(0.36, -0.36, -0.5))
+	arm.rotation_degrees = Vector3(8, -10, 0)
+	var arm_mat := arm.material_override as StandardMaterial3D
+	arm_mat.no_depth_test = true
+	arm_mat.render_priority = 9
+	cam.add_child(arm)
+	avatar = AvatarModel.new()
+	avatar.visible = false
+	add_child(avatar)
 	outline = MeshInstance3D.new()
 	outline.top_level = true
 	var am := ArrayMesh.new()
@@ -98,6 +124,7 @@ func _ready() -> void:
 	(crack.material_override as StandardMaterial3D).transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	crack.visible = false
 	add_child(crack)
+	inv.changed.connect(func(): _hand_id = -1)
 
 
 # ---------------------------------------------------------------- entrada
@@ -111,8 +138,20 @@ func apply_look(d: Vector2) -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if ui_open or dead:
 		return
-	if event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
-		apply_look(event.relative * 0.0022 * Settings.look_sens)
+	if event is InputEventMouseMotion:
+		var real: bool = event.device != InputEvent.DEVICE_ID_EMULATION
+		if real and Settings.use_touch() and not _real_mouse:
+			_real_mouse = true # mouse de verdade no aparelho: captura o ponteiro e gira sem clicar
+			Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+		if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED or (real and _real_mouse):
+			apply_look(event.relative * 0.0022 * Settings.look_sens)
+	elif event is InputEventMouseButton and event.device != InputEvent.DEVICE_ID_EMULATION and Settings.use_touch():
+		if event.button_index == MOUSE_BUTTON_LEFT:
+			_m_attack = event.pressed
+		elif event.button_index == MOUSE_BUTTON_RIGHT:
+			_m_place = event.pressed
+	if event.is_action_pressed("perspective"):
+		cycle_view()
 	if event.is_action_pressed("hotbar_next"):
 		selected = (selected + 1) % 9
 	elif event.is_action_pressed("hotbar_prev"):
@@ -134,20 +173,75 @@ func _drop_selected(whole: bool) -> void:
 	var n: int = s[1] if whole else 1
 	var id: int = s[0]
 	inv.take_from(selected, n)
-	var d := -cam.global_transform.basis.z
-	game.spawn_drop_net(id, n, cam.global_position + d * 0.5, d * 5.0 + Vector3.UP * 2.0, 1.5)
+	var d := eye_dir()
+	game.spawn_drop_net(id, n, eye_pos() + d * 0.5, d * 5.0 + Vector3.UP * 2.0, 1.5)
 
 
 func held_id() -> int:
 	return inv.get_id(selected)
 
 
+func cycle_view() -> void:
+	view = (view + 1) % 3
+
+
 func set_ui_open(v: bool) -> void:
 	ui_open = v
-	if not Settings.use_touch():
+	if not Settings.use_touch() or _real_mouse:
 		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE if v else Input.MOUSE_MODE_CAPTURED
 	if v:
+		_m_attack = false
+		_m_place = false
 		_reset_break()
+
+
+## Posição/direção "dos olhos" (independe da perspectiva da câmera).
+func eye_pos() -> Vector3:
+	return head.global_position
+
+
+func eye_dir() -> Vector3:
+	return -head.global_transform.basis.z
+
+
+func _sneak_guard(delta: float) -> void:
+	var r := 0.3
+	var fy := floori(global_position.y - 0.1)
+	var vx := velocity.x * delta
+	var vz := velocity.z * delta
+	var px := global_position.x
+	var pz := global_position.z
+	if absf(vx) > 0.00001 and not _supported(px + vx, pz, fy, r):
+		velocity.x = 0.0
+	if absf(vz) > 0.00001 and not _supported(px + velocity.x * delta, pz + vz, fy, r):
+		velocity.z = 0.0
+
+
+func _supported(cx: float, cz: float, fy: int, r: float) -> bool:
+	for ox in [-r, r]:
+		for oz in [-r, r]:
+			if Blocks.is_solid(world.get_block(floori(cx + ox), fy, floori(cz + oz))):
+				return true
+	return false
+
+
+func _update_camera() -> void:
+	var first := view == 0
+	avatar.visible = not first
+	arm.visible = first
+	if first:
+		cam.position = Vector3.ZERO
+		cam.rotation = Vector3.ZERO
+		return
+	var sgn := 1.0 if view == 1 else -1.0
+	var dirw := head.global_transform.basis.z * sgn
+	var from := head.global_position
+	var dist := 3.6
+	var hit := world.raycast(from, dirw, dist + 0.3)
+	if not hit.is_empty():
+		dist = maxf(0.4, float(hit["t"]) - 0.25)
+	cam.global_position = from + dirw * dist
+	cam.rotation = Vector3(0.0, 0.0 if view == 1 else PI, 0.0)
 
 
 # ---------------------------------------------------------------- física
@@ -201,6 +295,8 @@ func _physics_process(delta: float) -> void:
 		accel = 2.5
 	velocity.x = move_toward(velocity.x, target_v.x, accel * delta)
 	velocity.z = move_toward(velocity.z, target_v.z, accel * delta)
+	if sneak and not flying and not _in_water and is_on_floor():
+		_sneak_guard(delta) # agachado não cai das bordas
 
 	if flying:
 		var vy := 0.0
@@ -308,8 +404,17 @@ func _process(delta: float) -> void:
 	_place_cd -= delta
 	_mine_cd -= delta
 	_swing = maxf(0.0, _swing - delta)
-	var origin := cam.global_position
-	var dir := -cam.global_transform.basis.z
+	if _swing > _prev_swing + 0.01:
+		avatar.swing()
+	_prev_swing = _swing
+	if not ui_open and not (Settings.use_touch() and not _real_mouse) and Input.mouse_mode != Input.MOUSE_MODE_CAPTURED and get_window().has_focus():
+		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+	_update_camera()
+	_update_hand()
+	avatar.set_held(held_id())
+	avatar.animate(delta, Vector2(velocity.x, velocity.z).length(), pitch, Input.is_action_pressed("sneak") and not flying)
+	var origin := eye_pos()
+	var dir := eye_dir()
 	var reach := 6.0 if creative else 4.8
 	target = world.raycast(origin, dir, reach) if not frozen else {}
 	if target.is_empty() or ui_open:
@@ -322,7 +427,7 @@ func _process(delta: float) -> void:
 		crack.visible = false
 		return
 	var held := held_id()
-	if Input.is_action_pressed("attack"):
+	if Input.is_action_pressed("attack") or _m_attack:
 		var bt: float = target["t"] if not target.is_empty() else reach
 		var ent: Node = _entity_target(origin, dir, minf(bt, reach))
 		if ent != null:
@@ -335,11 +440,10 @@ func _process(delta: float) -> void:
 			_mine(delta, held)
 		else:
 			_reset_break()
-			if _swing <= 0.0:
-				_swing = 0.25
+			_swing = 0.12
 	else:
 		_reset_break()
-	if Input.is_action_pressed("place") and _place_cd <= 0.0:
+	if (Input.is_action_pressed("place") or _m_place) and _place_cd <= 0.0:
 		_place_cd = 0.3
 		_do_place(held)
 
@@ -357,8 +461,7 @@ func _mine(delta: float, held: int) -> void:
 	if bp != _break_pos:
 		_break_pos = bp
 		_break_t = 0.0
-	if _swing <= 0.0:
-		_swing = 0.25
+	_swing = 0.12
 	var need := 0.0 if creative else Blocks.break_time(bid, held)
 	if is_inf(need):
 		crack.visible = false
@@ -366,21 +469,20 @@ func _mine(delta: float, held: int) -> void:
 	if creative:
 		if _mine_cd <= 0.0:
 			_mine_cd = 0.2
-			game.player_break_block(bp, bid, false)
+			if not game.fire_event("before-break", {"block": Blocks.string_of(bid), "bx": bp.x, "by": bp.y, "bz": bp.z}):
+				game.player_break_block(bp, bid, false)
 		return
 	_break_t += delta
-	_chip_t -= delta
-	if _chip_t <= 0.0:
-		_chip_t = 0.12
-		game.particles.chip(bid, bp, target["normal"], 2)
 	crack.visible = true
 	crack.global_position = Vector3(bp) + Vector3.ONE * 0.5
 	(crack.material_override as StandardMaterial3D).albedo_color = Color(0, 0, 0, clampf(_break_t / need, 0.0, 1.0) * 0.65)
 	if _break_t >= need:
 		var harvest := Blocks.can_harvest(bid, held)
 		_reset_break()
+		if game.fire_event("before-break", {"block": Blocks.string_of(bid), "bx": bp.x, "by": bp.y, "bz": bp.z}):
+			return
 		game.player_break_block(bp, bid, harvest)
-		if Blocks.is_tool(held):
+		if Blocks.has_dur(held):
 			inv.use_durability(selected, 1)
 
 
@@ -406,25 +508,41 @@ func _do_attack(ent: Node, dir: Vector3, held: int) -> void:
 		dmg *= 1.5
 	var flat := Vector3(dir.x, 0, dir.z).normalized()
 	var kb := flat * (9.0 if _sprinting else 6.5)
+	var tkind := "player" if ent is RemotePlayer else String(ent.get("kind"))
+	var ev := {"damage": dmg, "target": tkind, "crit": crit}
+	if game.fire_event("before-hit", ev):
+		return
 	game.player_attack(ent, dmg, kb)
-	if Blocks.is_tool(held) and not creative:
+	if crit:
+		game.particles.burst("crit", ent.global_position + Vector3(0, float(ent.hit_h) * 0.65, 0))
+	game.fire_event("after-hit", ev)
+	if Blocks.has_dur(held) and not creative:
 		inv.use_durability(selected, 1)
 
 
 func _do_place(held: int) -> void:
-	_swing = 0.25
+	_swing = 0.15
+	if held != 0 and game.fire_event("before-use", {}):
+		return
+	if held != 0:
+		game.fire_event("item-use", {})
 	if held != 0 and Blocks.food.has(held):
 		if hunger < 20.0 and not creative:
 			hunger = minf(20.0, hunger + Blocks.food[held])
+			game.particles.eat(eye_pos() + eye_dir() * 0.6 + Vector3(0, -0.15, 0), held)
 			inv.take_from(selected, 1)
 			_place_cd = 0.5
 		return
 	if target.is_empty():
 		return
 	var tid: int = target["id"]
-	if (tid == Blocks.TABLE or Blocks.is_container(tid)) and not Input.is_action_pressed("sneak"):
+	if (tid == Blocks.TABLE or tid == Blocks.FURNACE) and not Input.is_action_pressed("sneak"):
 		_place_cd = 0.5
-		use_block.emit(target["pos"], tid)
+		station_requested.emit()
+		return
+	if tid == Blocks.CHEST and not Input.is_action_pressed("sneak"):
+		_place_cd = 0.5
+		chest_requested.emit(Vector3i(target["pos"]))
 		return
 	if held == 0 or not Blocks.is_block(held):
 		return
@@ -441,13 +559,24 @@ func _do_place(held: int) -> void:
 	if p.x + 0.3 > bmin.x and p.x - 0.3 < bmax.x and p.z + 0.3 > bmin.z and p.z - 0.3 < bmax.z \
 		and p.y + 1.8 > bmin.y and p.y < bmax.y and Blocks.is_solid(held):
 		return
-	game.player_place_block(np, held)
-	if not creative:
+	var placed: bool = game.player_place_block(np, held)
+	if placed and not creative:
 		inv.take_from(selected, 1)
 
 
-func swing_amount() -> float:
-	return clampf(_swing / 0.25, 0.0, 1.0)
+func _update_hand() -> void:
+	var id := held_id()
+	if id != _hand_id:
+		_hand_id = id
+		hand.texture = Blocks.icon(id) if id != 0 else null
+		if id != 0:
+			hand.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	hand.visible = id != 0 and view == 0
+	var s := sin((0.25 - _swing) * 12.0) if _swing > 0.0 else 0.0
+	arm.position = Vector3(0.36, -0.36 - s * 0.04, -0.5 + s * 0.12)
+	arm.rotation_degrees = Vector3(8.0 + s * 38.0, -10.0, 0.0)
+	hand.position = Vector3(0.42, -0.32 - s * 0.05, -0.75 + s * 0.15)
+	hand.rotation_degrees = Vector3(s * 35.0, -20.0, 8.0 - s * 20.0)
 
 
 # ---------------------------------------------------------------- vida

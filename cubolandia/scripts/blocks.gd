@@ -22,10 +22,9 @@ const FURNACE := 16
 const SNOW := 17
 const GRAVEL := 18
 const BRICK := 19
-const TORCH := 20
-const CHEST := 21
-const MAX_BLOCK := 21 # último bloco "de fábrica"; blocos de mods usam 22..99 e 160..255
-const LIGHT_MAX := 8
+const CHEST := 20
+const FURNACE_ON := 21
+const MAX_BLOCK := 21
 
 # ---- IDs de itens ----
 const STICK := 100
@@ -53,13 +52,12 @@ const TIER_COLORS := [Color(0.62, 0.46, 0.26), Color(0.55, 0.55, 0.57), Color(0.
 const TIER_SPEED := [2.0, 4.0, 6.0, 8.0]
 const TIER_DUR := [60, 132, 251, 1562]
 
-const ATLAS_COLS := 16
-const ATLAS_ROWS := 16
+const ATLAS_COLS := 8
 const TILE_NAMES := [
 	"grass_top", "grass_side", "dirt", "stone", "cobble", "sand", "water", "log_side",
 	"log_top", "leaves", "planks", "coal_ore", "iron_ore", "diamond_ore", "bedrock", "glass",
 	"table_top", "table_side", "furnace_side", "furnace_top", "snow", "gravel", "brick",
-	"torch", "chest_top", "chest_side",
+	"chest_top", "chest_side", "furnace_on",
 ]
 
 var defs: Dictionary = {}
@@ -67,42 +65,28 @@ var recipes: Array = []
 var food: Dictionary = {}
 var atlas_tex: ImageTexture
 var atlas_img: Image
-var tile_names: Array = []
-var mod_tiles: Dictionary = {}
-var name_ids: Dictionary = {}  # "dirt" / "star:dirt" / "mod:item" -> id
-var id_names: Dictionary = {}  # id -> nome com namespace
 var _icons: Dictionary = {}
-var _avg: Dictionary = {}
+var _icon_imgs: Dictionary = {}
+var _item_meshes: Dictionary = {}
+var _item_mat: StandardMaterial3D
 var _tile_index: Dictionary = {}
-var _base_ids: Dictionary = {}
-var _base_names: Dictionary = {}
-var _base_recipe_count := 0
-var _unknown := {"name": "?", "hard": 1.0, "tool": -1, "min_tier": -1, "drop": 0, "tiles": ["grass_top", "grass_top", "grass_top"],
-	"solid": false, "opaque": false, "stack": 64, "block": true, "icon_tile": "grass_top", "light": 0}
 
 
 func _ready() -> void:
-	tile_names = TILE_NAMES.duplicate()
-	for i in tile_names.size():
-		_tile_index[tile_names[i]] = i
+	for i in TILE_NAMES.size():
+		_tile_index[TILE_NAMES[i]] = i
 	_define_blocks()
 	_define_items()
 	_define_recipes()
-	_define_names()
-	_base_recipe_count = recipes.size()
-	for k in defs:
-		_base_ids[k] = true
-	for k in name_ids:
-		_base_names[k] = true
 	_build_atlas()
 
 
 # ---------------------------------------------------------------- definições
-func _b(id: int, nm: String, hard: float, tool: int, min_tier: int, drop: int, tiles: Array, solid := true, opaque := true, light := 0) -> void:
+func _b(id: int, nm: String, hard: float, tool: int, min_tier: int, drop: int, tiles: Array, solid := true, opaque := true) -> void:
 	defs[id] = {
 		"name": nm, "hard": hard, "tool": tool, "min_tier": min_tier, "drop": drop,
 		"tiles": tiles, "solid": solid, "opaque": opaque, "stack": 64, "block": true,
-		"icon_tile": tiles[1], "light": light,
+		"icon_tile": tiles[1],
 	}
 
 
@@ -126,8 +110,8 @@ func _define_blocks() -> void:
 	_b(SNOW, "Neve", 0.3, KIND_SHOVEL, -1, SNOW, ["snow", "snow", "snow"])
 	_b(GRAVEL, "Cascalho", 0.6, KIND_SHOVEL, -1, GRAVEL, ["gravel", "gravel", "gravel"])
 	_b(BRICK, "Tijolos", 2.0, KIND_PICK, 0, BRICK, ["brick", "brick", "brick"])
-	_b(TORCH, "Tocha", 0.0, -1, -1, TORCH, ["torch", "torch", "torch"], false, false, LIGHT_MAX)
 	_b(CHEST, "Baú", 2.5, KIND_AXE, -1, CHEST, ["chest_top", "chest_side", "chest_top"])
+	_b(FURNACE_ON, "Fornalha", 3.5, KIND_PICK, 0, FURNACE, ["furnace_top", "furnace_on", "furnace_top"])
 	defs[GRASS]["icon_tile"] = "grass_side"
 	defs[LOG]["icon_tile"] = "log_side"
 
@@ -161,178 +145,162 @@ func _define_items() -> void:
 			}
 
 
-func _r(out: int, n: int, ing: Dictionary, st := 0) -> void:
-	recipes.append({"out": out, "n": n, "in": ing, "st": st})
+var smelting: Dictionary = {}
+var fuels: Dictionary = {}
+
+
+## Receita em grade. pat = linhas de ids (0 = vazio). Sem forma: shapeless.
+func _r(out: int, n: int, pat: Array, shapeless := false) -> void:
+	var h: int = pat.size()
+	var w: int = pat[0].size()
+	recipes.append({"out": out, "n": n, "pat": pat, "w": w, "h": h, "shapeless": shapeless})
 
 
 func _define_recipes() -> void:
-	# st: 0 = qualquer lugar (2x2), 1 = perto de mesa de trabalho, 2 = perto de fornalha (gasta 1 carvão)
-	_r(PLANKS, 4, {LOG: 1})
-	_r(STICK, 4, {PLANKS: 2})
-	_r(TABLE, 1, {PLANKS: 4})
-	_r(FURNACE, 1, {COBBLE: 8}, 1)
-	_r(BRICK, 2, {STONE: 4}, 1)
-	_r(GLASS, 1, {SAND: 1, COAL: 1}, 2)
-	_r(TORCH, 4, {COAL: 1, STICK: 1})
+	var P := PLANKS
+	var S := STICK
+	_r(PLANKS, 4, [[LOG]], true)
+	_r(STICK, 4, [[P], [P]])
+	_r(TABLE, 1, [[P, P], [P, P]])
+	_r(CHEST, 1, [[P, P, P], [P, 0, P], [P, P, P]])
+	_r(FURNACE, 1, [[COBBLE, COBBLE, COBBLE], [COBBLE, 0, COBBLE], [COBBLE, COBBLE, COBBLE]])
+	_r(BRICK, 4, [[STONE, STONE], [STONE, STONE]])
 	var mats := [PLANKS, COBBLE, IRON_INGOT, DIAMOND]
 	for t in 4:
 		var m: int = mats[t]
-		_r(TOOL_BASE + t * 10 + KIND_PICK, 1, {m: 3, STICK: 2}, 1)
-		_r(TOOL_BASE + t * 10 + KIND_AXE, 1, {m: 3, STICK: 2}, 1)
-		_r(TOOL_BASE + t * 10 + KIND_SHOVEL, 1, {m: 1, STICK: 2}, 1)
-		_r(TOOL_BASE + t * 10 + KIND_SWORD, 1, {m: 2, STICK: 1}, 1)
-	# fundição
-	_r(IRON_INGOT, 1, {IRON_ORE: 1, COAL: 1}, 2)
-	_r(STONE, 1, {COBBLE: 1, COAL: 1}, 2)
-	_r(COOKED_PORK, 1, {RAW_PORK: 1, COAL: 1}, 2)
-	_r(STEAK, 1, {RAW_BEEF: 1, COAL: 1}, 2)
+		_r(TOOL_BASE + t * 10 + KIND_PICK, 1, [[m, m, m], [0, S, 0], [0, S, 0]])
+		_r(TOOL_BASE + t * 10 + KIND_AXE, 1, [[m, m], [m, S], [0, S]])
+		_r(TOOL_BASE + t * 10 + KIND_SHOVEL, 1, [[m], [S], [S]])
+		_r(TOOL_BASE + t * 10 + KIND_SWORD, 1, [[m], [m], [S]])
+	smelting = {IRON_ORE: IRON_INGOT, COBBLE: STONE, SAND: GLASS, RAW_PORK: COOKED_PORK, RAW_BEEF: STEAK, LOG: COAL}
+	fuels = {COAL: 80.0, LOG: 15.0, PLANKS: 15.0, STICK: 5.0, TABLE: 15.0, CHEST: 15.0}
 
 
-func _define_names() -> void:
-	var m := {
-		"grass": GRASS, "dirt": DIRT, "stone": STONE, "cobblestone": COBBLE, "sand": SAND, "water": WATER,
-		"log": LOG, "leaves": LEAVES, "planks": PLANKS, "coal_ore": COAL_ORE, "iron_ore": IRON_ORE,
-		"diamond_ore": DIAMOND_ORE, "bedrock": BEDROCK, "glass": GLASS, "crafting_table": TABLE,
-		"furnace": FURNACE, "snow": SNOW, "gravel": GRAVEL, "bricks": BRICK, "torch": TORCH, "chest": CHEST,
-		"stick": STICK, "coal": COAL, "iron_ingot": IRON_INGOT, "diamond": DIAMOND, "raw_porkchop": RAW_PORK,
-		"cooked_porkchop": COOKED_PORK, "leather": LEATHER, "raw_beef": RAW_BEEF, "steak": STEAK,
-		"rotten_flesh": ROTTEN, "bone": BONE, "gunpowder": GUNPOWDER, "apple": APPLE,
-	}
-	var tiers := ["wooden", "stone", "iron", "diamond"]
-	var kinds := ["pickaxe", "axe", "shovel", "sword"]
-	for t in 4:
-		for k in 4:
-			m["%s_%s" % [tiers[t], kinds[k]]] = TOOL_BASE + t * 10 + k
-	for k in m:
-		name_ids[k] = m[k]
-		id_names[m[k]] = "star:" + k
-	var alias := {
-		"cobble": COBBLE, "table": TABLE, "workbench": TABLE, "brick": BRICK, "raw_pork": RAW_PORK,
-		"cooked_pork": COOKED_PORK, "rotten": ROTTEN, "iron": IRON_INGOT, "wood": LOG, "plank": PLANKS,
-		"tocha": TORCH, "bau": CHEST, "terra": DIRT, "pedra": STONE, "grama": GRASS, "areia": SAND,
-	}
-	for k in alias:
-		name_ids[k] = alias[k]
+## Acha receita para uma grade (Array de ids, row-major, gw x gh). Retorna {} se nenhuma.
+func match_recipe(grid: Array, gw: int, gh: int) -> Dictionary:
+	var minx := 99
+	var miny := 99
+	var maxx := -1
+	var maxy := -1
+	var ids: Array = []
+	for y in gh:
+		for x in gw:
+			var id: int = grid[y * gw + x]
+			if id != 0:
+				minx = mini(minx, x)
+				miny = mini(miny, y)
+				maxx = maxi(maxx, x)
+				maxy = maxi(maxy, y)
+				ids.append(id)
+	if ids.is_empty():
+		return {}
+	var w := maxx - minx + 1
+	var h := maxy - miny + 1
+	for r in recipes:
+		if r["shapeless"]:
+			var need: Array = []
+			for row in r["pat"]:
+				for v in row:
+					if v != 0:
+						need.append(v)
+			if need.size() != ids.size():
+				continue
+			var a := ids.duplicate()
+			a.sort()
+			need.sort()
+			if a == need:
+				return r
+			continue
+		if r["w"] != w or r["h"] != h:
+			continue
+		for mirror in 2:
+			var ok := true
+			for y in h:
+				for x in w:
+					var px := x if mirror == 0 else (w - 1 - x)
+					var want: int = r["pat"][y][px]
+					if grid[(miny + y) * gw + minx + x] != want:
+						ok = false
+			if ok:
+				return r
+	return {}
 
 
-## Converte "star:dirt", "dirt", "mod:item" ou "12" em id. -1 se não existir.
-func resolve(s: String) -> int:
-	s = s.strip_edges().to_lower()
-	if s.is_empty():
-		return -1
-	if s.is_valid_int():
-		var n := int(s)
-		return n if defs.has(n) else -1
-	if name_ids.has(s):
-		return int(name_ids[s])
-	var ci := s.find(":")
-	if ci > 0:
-		var ns := s.substr(0, ci)
-		var bare := s.substr(ci + 1)
-		if (ns == "star" or ns == "minecraft") and name_ids.has(bare):
-			return int(name_ids[bare])
-	return -1
+func smelt_result(id: int) -> int:
+	return smelting.get(id, 0)
 
 
-func ns_name(id: int) -> String:
-	return str(id_names.get(id, str(id)))
+func fuel_time(id: int) -> float:
+	return fuels.get(id, 0.0)
 
 
-func d_of(id: int) -> Dictionary:
-	return defs[id] if defs.has(id) else _unknown
+func is_container(id: int) -> bool:
+	return id == CHEST or id == FURNACE or id == FURNACE_ON
 
 
 # ---------------------------------------------------------------- consultas
 func name_of(id: int) -> String:
-	return str(defs[id]["name"]) if defs.has(id) else "?"
+	return defs[id]["name"] if defs.has(id) else "?"
 
 
 func is_block(id: int) -> bool:
-	return id > 0 and defs.has(id) and bool(defs[id].get("block", false))
+	return id > 0 and id <= MAX_BLOCK
 
 
 func is_solid(id: int) -> bool:
-	return id != AIR and defs.has(id) and bool(defs[id]["solid"])
+	return id != AIR and defs[id]["solid"]
 
 
 func is_opaque(id: int) -> bool:
-	return id != AIR and defs.has(id) and bool(defs[id]["opaque"])
-
-
-func light_of(id: int) -> int:
-	return int(defs[id].get("light", 0)) if defs.has(id) else 0
+	return id != AIR and defs[id]["opaque"]
 
 
 func is_tool(id: int) -> bool:
-	return defs.has(id) and defs[id].has("tool_kind")
-
-
-func has_dur(id: int) -> bool:
-	return defs.has(id) and int(defs[id].get("dur", 0)) > 0
+	return id >= TOOL_BASE
 
 
 func tool_kind(id: int) -> int:
-	return int(defs[id]["tool_kind"]) if is_tool(id) else -1
+	return defs[id]["tool_kind"] if is_tool(id) else -1
 
 
 func tool_tier(id: int) -> int:
-	return int(defs[id].get("tool_tier", 0)) if is_tool(id) else -1
-
-
-func tool_speed(id: int) -> float:
-	if not is_tool(id):
-		return 1.0
-	var d: Dictionary = defs[id]
-	if d.has("speed"):
-		return float(d["speed"])
-	return float(TIER_SPEED[clampi(int(d.get("tool_tier", 0)), 0, 3)])
+	return defs[id]["tool_tier"] if is_tool(id) else -1
 
 
 func max_dur(id: int) -> int:
-	return int(defs[id].get("dur", 0)) if defs.has(id) else 0
+	return defs[id]["dur"] if is_tool(id) else 0
 
 
 func stack_of(id: int) -> int:
-	return int(defs[id]["stack"]) if defs.has(id) else 64
+	return defs[id]["stack"] if defs.has(id) else 64
 
 
 func attack_damage(held: int) -> float:
-	if not defs.has(held):
-		return 1.0
-	var d: Dictionary = defs[held]
-	if d.has("dmg"):
-		return float(d["dmg"])
 	if not is_tool(held):
 		return 1.0
 	var base := [2.0, 3.0, 1.0, 4.0]
-	var k := tool_kind(held)
-	if k < 0 or k > 3:
-		return 1.0
-	return float(base[k]) + float(tool_tier(held))
+	return base[tool_kind(held)] + float(tool_tier(held))
 
 
 func can_harvest(block: int, held: int) -> bool:
-	var d: Dictionary = d_of(block)
-	if int(d["min_tier"]) < 0:
+	var d: Dictionary = defs[block]
+	if d["min_tier"] < 0:
 		return true
-	return tool_kind(held) == int(d["tool"]) and tool_tier(held) >= int(d["min_tier"])
+	return tool_kind(held) == d["tool"] and tool_tier(held) >= d["min_tier"]
 
 
 func break_time(block: int, held: int) -> float:
-	var d: Dictionary = d_of(block)
-	var h: float = float(d["hard"])
+	var d: Dictionary = defs[block]
+	var h: float = d["hard"]
 	if h < 0.0:
 		return INF
-	if held != 0 and defs.has(held) and bool(defs[held].get("no_break", false)):
-		return INF
-	var good: bool = int(d["tool"]) >= 0 and tool_kind(held) == int(d["tool"])
-	var spd := tool_speed(held)
-	if int(d["min_tier"]) >= 0:
-		if good and tool_tier(held) >= int(d["min_tier"]):
-			return h * 1.5 / spd
+	var good: bool = d["tool"] >= 0 and tool_kind(held) == d["tool"]
+	if d["min_tier"] >= 0:
+		if good and tool_tier(held) >= d["min_tier"]:
+			return h * 1.5 / TIER_SPEED[tool_tier(held)]
 		return h * 5.0
 	if good:
-		return h * 1.5 / spd
+		return h * 1.5 / TIER_SPEED[tool_tier(held)]
 	return h * 1.5
 
 
@@ -347,87 +315,10 @@ func drops_for(block: int, held: int) -> Array:
 		if r < 0.2:
 			return [STICK, 1]
 		return []
-	var d: Dictionary = d_of(block)
-	var dr: int = int(d["drop"])
-	if dr == 0:
+	var d: int = defs[block]["drop"]
+	if d == 0:
 		return []
-	return [dr, int(d.get("drop_n", 1))]
-
-
-# ---------------------------------------------------------------- mods (registro em tempo de execução)
-func register_mod_def(id: int, full_name: String, d: Dictionary) -> void:
-	defs[id] = d
-	name_ids[full_name.to_lower()] = id
-	id_names[id] = full_name.to_lower()
-
-
-func add_mod_tile(tname: String, img: Image) -> bool:
-	if tile_names.size() >= ATLAS_COLS * ATLAS_ROWS:
-		return false
-	var im: Image = img.duplicate()
-	im.convert(Image.FORMAT_RGBA8)
-	if im.get_width() != 16 or im.get_height() != 16:
-		im.resize(16, 16, Image.INTERPOLATE_NEAREST)
-	mod_tiles[tname] = im
-	_tile_index[tname] = tile_names.size()
-	tile_names.append(tname)
-	return true
-
-
-func rebuild_atlas() -> void:
-	_build_atlas()
-
-
-func reset_mods() -> void:
-	for id in defs.keys():
-		if not _base_ids.has(id):
-			defs.erase(id)
-	recipes = recipes.slice(0, _base_recipe_count)
-	for k in food.keys():
-		if not _base_ids.has(k):
-			food.erase(k)
-	for k in name_ids.keys():
-		if not _base_names.has(k):
-			name_ids.erase(k)
-	for k in id_names.keys():
-		if not _base_ids.has(k):
-			id_names.erase(k)
-	tile_names = TILE_NAMES.duplicate()
-	mod_tiles.clear()
-	_tile_index.clear()
-	for i in tile_names.size():
-		_tile_index[tile_names[i]] = i
-	_build_atlas()
-
-
-func avg_color(id: int) -> Color:
-	if _avg.has(id):
-		return _avg[id]
-	var c := Color(0.6, 0.6, 0.6)
-	if defs.has(id):
-		var d: Dictionary = defs[id]
-		if bool(d.get("block", false)):
-			var i: int = tile_index(str(d["icon_tile"]))
-			var ox := (i % ATLAS_COLS) * 16
-			var oy := (i / ATLAS_COLS) * 16
-			var r := 0.0
-			var g := 0.0
-			var b := 0.0
-			var n := 0
-			for y in 16:
-				for x in 16:
-					var px: Color = atlas_img.get_pixel(ox + x, oy + y)
-					if px.a > 0.5:
-						r += px.r
-						g += px.g
-						b += px.b
-						n += 1
-			if n > 0:
-				c = Color(r / n, g / n, b / n)
-		elif d.has("color"):
-			c = d["color"]
-	_avg[id] = c
-	return c
+	return [d, 1]
 
 
 # ---------------------------------------------------------------- atlas
@@ -437,27 +328,21 @@ func tile_index(tname: String) -> int:
 
 func tile_uv(tname: String) -> Vector2:
 	var i: int = tile_index(tname)
-	return Vector2(float(i % ATLAS_COLS) / ATLAS_COLS, float(i / ATLAS_COLS) / ATLAS_ROWS)
+	return Vector2(float(i % ATLAS_COLS) / ATLAS_COLS, float(i / ATLAS_COLS) / _atlas_rows())
 
 
 func _atlas_rows() -> int:
-	return ATLAS_ROWS
+	return int(ceil(float(TILE_NAMES.size()) / ATLAS_COLS))
 
 
 func _build_atlas() -> void:
-	atlas_img = Image.create(16 * ATLAS_COLS, 16 * ATLAS_ROWS, false, Image.FORMAT_RGBA8)
+	var rows := _atlas_rows()
+	atlas_img = Image.create(16 * ATLAS_COLS, 16 * rows, false, Image.FORMAT_RGBA8)
 	atlas_img.fill(Color(0, 0, 0, 0))
-	for i in tile_names.size():
-		var nm: String = tile_names[i]
-		var t: Image
-		if i < TILE_NAMES.size():
-			t = _gen_tile(nm, i)
-		else:
-			t = mod_tiles[nm]
+	for i in TILE_NAMES.size():
+		var t := _gen_tile(TILE_NAMES[i], i)
 		atlas_img.blit_rect(t, Rect2i(0, 0, 16, 16), Vector2i((i % ATLAS_COLS) * 16, (i / ATLAS_COLS) * 16))
 	atlas_tex = ImageTexture.create_from_image(atlas_img)
-	_icons.clear()
-	_avg.clear()
 
 
 func _fill_noise(img: Image, base: Color, amt: float, rng: RandomNumberGenerator) -> void:
@@ -573,37 +458,6 @@ func _gen_tile(tname: String, idx: int) -> Image:
 			_fill_noise(img, Color(0.95, 0.97, 1.0), 0.02, rng)
 		"gravel":
 			_fill_noise(img, Color(0.55, 0.52, 0.5), 0.13, rng)
-		"torch":
-			img.fill(Color(0, 0, 0, 0))
-			for y in range(6, 16):
-				img.set_pixel(7, y, Color(0.45, 0.3, 0.15))
-				img.set_pixel(8, y, Color(0.35, 0.23, 0.1))
-			for y in range(6, 9):
-				img.set_pixel(7, y, Color(1.0, 0.85, 0.2))
-				img.set_pixel(8, y, Color(1.0, 0.6, 0.1))
-			for y in range(3, 6):
-				for x in range(6, 10):
-					if y == 3 and (x == 6 or x == 9):
-						continue
-					img.set_pixel(x, y, Color(1.0, 0.65 + 0.1 * float(y - 3), 0.15, 1.0))
-		"chest_top":
-			_fill_noise(img, Color(0.6, 0.42, 0.2), 0.03, rng)
-			for i in 16:
-				img.set_pixel(i, 0, Color(0.33, 0.2, 0.09))
-				img.set_pixel(i, 15, Color(0.33, 0.2, 0.09))
-				img.set_pixel(0, i, Color(0.33, 0.2, 0.09))
-				img.set_pixel(15, i, Color(0.33, 0.2, 0.09))
-		"chest_side":
-			_fill_noise(img, Color(0.62, 0.44, 0.22), 0.03, rng)
-			for i in 16:
-				img.set_pixel(i, 0, Color(0.33, 0.2, 0.09))
-				img.set_pixel(i, 15, Color(0.33, 0.2, 0.09))
-				img.set_pixel(0, i, Color(0.33, 0.2, 0.09))
-				img.set_pixel(15, i, Color(0.33, 0.2, 0.09))
-				img.set_pixel(i, 6, Color(0.4, 0.26, 0.12))
-			for y in range(5, 10):
-				img.set_pixel(7, y, Color(0.85, 0.8, 0.5))
-				img.set_pixel(8, y, Color(0.75, 0.7, 0.4))
 		"brick":
 			_fill_noise(img, Color(0.62, 0.28, 0.22), 0.04, rng)
 			for y in 16:
@@ -623,26 +477,194 @@ func icon(id: int) -> Texture2D:
 	var tex: Texture2D
 	var d: Dictionary = defs[id]
 	if d["block"]:
-		var at := AtlasTexture.new()
-		at.atlas = atlas_tex
-		var i: int = tile_index(d["icon_tile"])
-		at.region = Rect2((i % ATLAS_COLS) * 16, (i / ATLAS_COLS) * 16, 16, 16)
-		tex = at
-	elif d.get("shape", "") == "texture" and d.has("tex"):
-		tex = d["tex"]
+		tex = ImageTexture.create_from_image(_gen_block_icon(d))
 	else:
-		tex = ImageTexture.create_from_image(_gen_icon(d))
+		tex = ImageTexture.create_from_image(icon_image(id))
 	_icons[id] = tex
 	return tex
+
+
+func icon_image(id: int) -> Image:
+	if _icon_imgs.has(id):
+		return _icon_imgs[id]
+	var im := _gen_icon(defs[id])
+	_outline(im)
+	_icon_imgs[id] = im
+	return im
+
+
+func _outline(img: Image) -> void:
+	var src := img.duplicate() as Image
+	for y in 16:
+		for x in 16:
+			if src.get_pixel(x, y).a > 0.5:
+				continue
+			for o in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+				var nx: int = x + o.x
+				var ny: int = y + o.y
+				if nx >= 0 and nx < 16 and ny >= 0 and ny < 16 and src.get_pixel(nx, ny).a > 0.5:
+					img.set_pixel(x, y, src.get_pixel(nx, ny).darkened(0.65))
+					break
+
+
+func _tile_pixel(tname: String, tx: float, ty: float) -> Color:
+	var i: int = tile_index(tname)
+	var px := clampi(int(tx * 16.0), 0, 15) + (i % ATLAS_COLS) * 16
+	var py := clampi(int(ty * 16.0), 0, 15) + (i / ATLAS_COLS) * 16
+	return atlas_img.get_pixel(px, py)
+
+
+## Ícone de bloco em cubo isométrico (estilo Minecraft), 32x32.
+func _gen_block_icon(d: Dictionary) -> Image:
+	var N := 32
+	var img := Image.create(N, N, false, Image.FORMAT_RGBA8)
+	img.fill(Color(0, 0, 0, 0))
+	var tiles: Array = d["tiles"]
+	for py in N:
+		for px in N:
+			var sx := (px + 0.5) / N * 2.0 - 1.0
+			var sy := (py + 0.5) / N * 2.0 - 1.0
+			var u := (sx + 2.0 * (sy + 1.0)) * 0.5
+			var v := (2.0 * (sy + 1.0) - sx) * 0.5
+			var col := Color(0, 0, 0, 0)
+			if u >= 0.0 and u <= 1.0 and v >= 0.0 and v <= 1.0:
+				col = _tile_pixel(tiles[0], u, v)
+			else:
+				var vr := 1.0 - sx
+				var wr := (1.0 + vr) * 0.5 - sy
+				if vr >= 0.0 and vr <= 1.0 and wr >= 0.0 and wr <= 1.0:
+					col = _tile_pixel(tiles[1], sx, 1.0 - wr)
+					col = Color(col.r * 0.62, col.g * 0.62, col.b * 0.62, col.a)
+				else:
+					var ul := sx + 1.0
+					var wl := (ul + 1.0) * 0.5 - sy
+					if ul >= 0.0 and ul <= 1.0 and wl >= 0.0 and wl <= 1.0:
+						col = _tile_pixel(tiles[1], ul, 1.0 - wl)
+						col = Color(col.r * 0.82, col.g * 0.82, col.b * 0.82, col.a)
+			if col.a > 0.5:
+				col.a = 1.0
+			img.set_pixel(px, py, col)
+	return img
+
+
+## Malha extrudada (item grosso) a partir do ícone 16x16. Retorna ArrayMesh com cores por vértice.
+func item_mesh(id: int, size := 0.5, thick := 0.12) -> ArrayMesh:
+	var key := "%d_%.2f_%.2f" % [id, size, thick]
+	if _item_meshes.has(key):
+		return _item_meshes[key]
+	var img := icon_image(id)
+	var verts := PackedVector3Array()
+	var cols := PackedColorArray()
+	var idx := PackedInt32Array()
+	var px := size / 16.0
+	var hz := thick * 0.5
+	for y in 16:
+		for x in 16:
+			var c := img.get_pixel(x, y)
+			if c.a < 0.5:
+				continue
+			var x0 := (x - 8) * px
+			var x1 := x0 + px
+			var y1 := (8 - y) * px
+			var y0 := y1 - px
+			_quad(verts, cols, idx, [Vector3(x0, y0, hz), Vector3(x1, y0, hz), Vector3(x1, y1, hz), Vector3(x0, y1, hz)], c)
+			_quad(verts, cols, idx, [Vector3(x1, y0, -hz), Vector3(x0, y0, -hz), Vector3(x0, y1, -hz), Vector3(x1, y1, -hz)], c.darkened(0.15))
+			var sc := c.darkened(0.3)
+			if x == 0 or img.get_pixel(x - 1, y).a < 0.5:
+				_quad(verts, cols, idx, [Vector3(x0, y0, -hz), Vector3(x0, y0, hz), Vector3(x0, y1, hz), Vector3(x0, y1, -hz)], sc)
+			if x == 15 or img.get_pixel(x + 1, y).a < 0.5:
+				_quad(verts, cols, idx, [Vector3(x1, y0, hz), Vector3(x1, y0, -hz), Vector3(x1, y1, -hz), Vector3(x1, y1, hz)], sc)
+			if y == 0 or img.get_pixel(x, y - 1).a < 0.5:
+				_quad(verts, cols, idx, [Vector3(x0, y1, hz), Vector3(x1, y1, hz), Vector3(x1, y1, -hz), Vector3(x0, y1, -hz)], sc.lightened(0.1))
+			if y == 15 or img.get_pixel(x, y + 1).a < 0.5:
+				_quad(verts, cols, idx, [Vector3(x0, y0, -hz), Vector3(x1, y0, -hz), Vector3(x1, y0, hz), Vector3(x0, y0, hz)], sc.darkened(0.1))
+	var mesh := ArrayMesh.new()
+	if verts.size() > 0:
+		var arr := []
+		arr.resize(Mesh.ARRAY_MAX)
+		arr[Mesh.ARRAY_VERTEX] = verts
+		arr[Mesh.ARRAY_COLOR] = cols
+		arr[Mesh.ARRAY_INDEX] = idx
+		mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
+		mesh.surface_set_material(0, item_material())
+	_item_meshes[key] = mesh
+	return mesh
+
+
+func _quad(verts: PackedVector3Array, cols: PackedColorArray, idx: PackedInt32Array, q: Array, c: Color) -> void:
+	var b := verts.size()
+	for v in q:
+		verts.append(v)
+		cols.append(c)
+	idx.append_array([b, b + 1, b + 2, b, b + 2, b + 3])
+
+
+func item_material() -> StandardMaterial3D:
+	if _item_mat == null:
+		_item_mat = StandardMaterial3D.new()
+		_item_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		_item_mat.vertex_color_use_as_albedo = true
+		_item_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	return _item_mat
+
+
+func set_item_light(l: float) -> void:
+	var v := clampf(l, 0.3, 1.0)
+	item_material().albedo_color = Color(v, v, v)
+
+
+## Cubo 3D de bloco (para drops e mão) com UVs do atlas. Usa material do mundo.
+func block_cube_mesh(id: int, size := 0.3) -> ArrayMesh:
+	var key := "b%d_%.2f" % [id, size]
+	if _item_meshes.has(key):
+		return _item_meshes[key]
+	var tiles: Array = defs[id]["tiles"]
+	var verts := PackedVector3Array()
+	var uvs := PackedVector2Array()
+	var cols := PackedColorArray()
+	var idx := PackedInt32Array()
+	var e := 0.0006
+	var us := 1.0 / ATLAS_COLS - 2.0 * e
+	var vs := 1.0 / _atlas_rows() - 2.0 * e
+	for f in 6:
+		var tn: String = tiles[0] if f == 2 else (tiles[2] if f == 3 else tiles[1])
+		var buv := tile_uv(tn)
+		var b := verts.size()
+		var sh: float = World.FACE_SHADE[f]
+		for k in 4:
+			var v: Vector3 = World.FACE_V[f][k]
+			verts.append((v - Vector3(0.5, 0.5, 0.5)) * size)
+			var lu: Vector2 = World.FACE_UV[f][k]
+			uvs.append(buv + Vector2(e + lu.x * us, e + lu.y * vs))
+			cols.append(Color(sh, sh, sh, 1))
+		idx.append_array([b, b + 1, b + 2, b, b + 2, b + 3])
+	var mesh := ArrayMesh.new()
+	var arr := []
+	arr.resize(Mesh.ARRAY_MAX)
+	arr[Mesh.ARRAY_VERTEX] = verts
+	arr[Mesh.ARRAY_TEX_UV] = uvs
+	arr[Mesh.ARRAY_COLOR] = cols
+	arr[Mesh.ARRAY_INDEX] = idx
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
+	_item_meshes[key] = mesh
+	return mesh
+
+
+## Cor aleatória de um pixel do bloco (para partículas).
+func block_color(id: int) -> Color:
+	if not defs.has(id) or not defs[id]["block"]:
+		return Color(0.6, 0.6, 0.6)
+	var tn: String = defs[id]["tiles"][1]
+	return _tile_pixel(tn, randf(), randf())
 
 
 func _gen_icon(d: Dictionary) -> Image:
 	var img := Image.create(16, 16, false, Image.FORMAT_RGBA8)
 	img.fill(Color(0, 0, 0, 0))
-	var col: Color = d.get("color", Color(0.7, 0.7, 0.7))
+	var col: Color = d["color"]
 	var dark := col.darkened(0.35)
 	var wood := Color(0.5, 0.35, 0.18)
-	match str(d.get("shape", "blob")):
+	match d["shape"]:
 		"line":
 			for i in range(2, 14):
 				img.set_pixel(i, 15 - i, col)

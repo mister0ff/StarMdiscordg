@@ -44,14 +44,9 @@ Godot → *Editor → Gerenciar templates de exportação* (instalar) → *Edito
 Quem hospeda: *Multijogador → Hospedar* (porta padrão 25565 UDP; libere no roteador/firewall ou use Radmin/ZeroTier/Tailscale). Os outros: *Entrar* com o IP do host.
 
 ## Novidades desta versão
-- Tochas (carvão + graveto) que iluminam ao redor, com modelo próprio; mundo **Plano** ou **Normal** ao criar o mundo
-- Opções ao criar o mundo: Sempre dia, Spawn de mobs, Comandos (comandos só funcionam se ativados)
-- Dia/noite com 20 minutos (antes 10)
-- Braço visível em 1ª pessoa, mira com contorno, partículas (quebrar bloco, comer, golpe crítico, dano)
-- Agachar não deixa cair da borda do bloco
-- Chat em tela cheia com histórico `<nick> mensagem` (limpa ao sair do mundo)
-- Botão voltar do Android abre/fecha a pausa; mouse sem precisar segurar botão (celular com mouse)
-- HUD respeita a área segura da tela; Configurações > Geral: tamanho da HUD e "Subir HUD"; Pausa > Ajustar botões da HUD
-- Novos comandos: `/say /title /fill /setblock /clear`
-
-Não implementado ainda: menu novo com avatar 3D e servidores, 3ª pessoa, baú com inventário, sistema de mods `.stc`.
+- Blocos e itens em 3D: drops são cubos/itens extrudados grossos; ícones de bloco em cubo isométrico.
+- Mão em primeira pessoa com item na mão e animação de golpe; partículas ao quebrar blocos.
+- HUD e botões de toque respeitam a área segura da tela (ajuste em Opções: tamanho/margem da HUD). F11 = tela cheia.
+- Interfaces estilo Minecraft: inventário com grade 2x2, mesa 3x3 (receitas por formato), baú, fornalha (combustível e fundição) e inventário criativo.
+- Dia/noite 3x mais longo (30 min). Otimizações: cache de chunks visíveis, menos rebuilds em explosões.
+- Multijogador com relay (vários jogadores), servidor dedicado 24h (`SERVER.md`) e lista de servidores públicos.

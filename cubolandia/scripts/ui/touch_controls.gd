@@ -21,7 +21,7 @@ const HOLD := ["jump", "attack", "place", "sneak"]
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
-	set_anchors_preset(Control.PRESET_FULL_RECT)
+	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_font = ThemeDB.fallback_font
 	visible = false
@@ -31,7 +31,7 @@ func _ready() -> void:
 func _build_panel() -> void:
 	_panel = PanelContainer.new()
 	_panel.visible = false
-	_panel.set_anchors_preset(Control.PRESET_CENTER_TOP)
+	_panel.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
 	_panel.position.y = 10
 	add_child(_panel)
 	var hb := HBoxContainer.new()
@@ -98,8 +98,12 @@ func _scale_sel(delta: float) -> void:
 
 func _center(id: String) -> Vector2:
 	var L: Dictionary = Settings.touch_layout[id]
-	var vr := Util.hud_rect(get_viewport())
-	return vr.position + Vector2(float(L["x"]) * vr.size.x, float(L["y"]) * vr.size.y)
+	var vs := get_viewport_rect().size
+	var i := Settings.insets
+	var ar := Rect2(i.x, i.y, maxf(100.0, vs.x - i.x - i.z), maxf(100.0, vs.y - i.y - i.w))
+	var r := _radius(id)
+	var c := Vector2(ar.position.x + L["x"] * ar.size.x, ar.position.y + L["y"] * ar.size.y)
+	return Vector2(clampf(c.x, ar.position.x + r, ar.end.x - r), clampf(c.y, ar.position.y + r, ar.end.y - r))
 
 
 func _radius(id: String) -> float:
@@ -250,9 +254,10 @@ func _edit_input(event: InputEvent) -> void:
 		queue_redraw()
 	elif event is InputEventMouseMotion and _drag_btn != "":
 		var L: Dictionary = Settings.touch_layout[_drag_btn]
-		var vr := Util.hud_rect(get_viewport())
-		L["x"] = clampf((event.position.x - vr.position.x) / vr.size.x, 0.03, 0.97)
-		L["y"] = clampf((event.position.y - vr.position.y) / vr.size.y, 0.05, 0.95)
+		var vs := get_viewport_rect().size
+		var i := Settings.insets
+		L["x"] = clampf((event.position.x - i.x) / maxf(1.0, vs.x - i.x - i.z), 0.03, 0.97)
+		L["y"] = clampf((event.position.y - i.y) / maxf(1.0, vs.y - i.y - i.w), 0.05, 0.95)
 		queue_redraw()
 
 
@@ -261,7 +266,7 @@ func _draw() -> void:
 	if not visible:
 		return
 	if edit_mode:
-		draw_rect(Rect2(Vector2.ZERO, size), Color(0.05, 0.07, 0.12, 0.92))
+		draw_rect(Rect2(Vector2.ZERO, get_viewport_rect().size), Color(0.05, 0.07, 0.12, 0.92))
 	var alpha := 0.9 if edit_mode else Settings.touch_opacity
 	for id in Settings.touch_layout:
 		if id == "fly" and not edit_mode and not main.creative_mode:

@@ -40,17 +40,13 @@ const DEFAULT_TOUCH := {
 	"pause": {"x": 0.95, "y": 0.08, "s": 0.7},
 	"hotbar_prev": {"x": 0.36, "y": 0.10, "s": 0.7},
 	"hotbar_next": {"x": 0.44, "y": 0.10, "s": 0.7},
+	"drop": {"x": 0.52, "y": 0.10, "s": 0.7},
 }
 
 const TOUCH_LABELS := {
 	"joystick": "Direcional", "jump": "Pular", "attack": "Atacar", "place": "Colocar",
 	"sneak": "Agachar", "fly": "Voar", "inventory": "Inv", "chat": "Chat",
-	"pause": "II", "hotbar_prev": "<", "hotbar_next": ">",
-}
-
-const SKIN_DEFAULT := {
-	"skin": Color(0.85, 0.65, 0.5), "hair": Color(0.25, 0.15, 0.08),
-	"shirt": Color(0.2, 0.55, 0.9), "pants": Color(0.2, 0.25, 0.55),
+	"pause": "II", "hotbar_prev": "<", "hotbar_next": ">", "drop": "Q",
 }
 
 var keys: Dictionary = {}
@@ -68,9 +64,10 @@ var last_ip := "127.0.0.1"
 var volume := 1.0
 var hud_scale := 1.0
 var hud_margin := 0.0
-var show_crosshair := true
-var mouse_seen := false
-var skin: Dictionary = SKIN_DEFAULT.duplicate()
+var show_hand := true
+var particles := true
+var custom_servers: Array = []
+var insets := Vector4(0, 0, 0, 0) # esquerda, topo, direita, baixo (unidades da viewport)
 
 
 func _ready() -> void:
@@ -80,6 +77,41 @@ func _ready() -> void:
 		render_distance = 3
 	load_settings()
 	apply_keys()
+
+
+## Calcula margens seguras (notch, barras do sistema, janela maior que a tela).
+func update_insets(vp: Viewport) -> void:
+	var vs := vp.get_visible_rect().size
+	var ws := Vector2(DisplayServer.window_get_size())
+	if ws.x < 1.0 or ws.y < 1.0 or DisplayServer.get_name() == "headless":
+		insets = Vector4(hud_margin, hud_margin, hud_margin, hud_margin)
+		return
+	var k := Vector2(vs.x / ws.x, vs.y / ws.y)
+	var l := 0.0
+	var t := 0.0
+	var r := 0.0
+	var b := 0.0
+	if OS.has_feature("mobile"):
+		var sa := DisplayServer.get_display_safe_area()
+		var ss := Vector2(DisplayServer.screen_get_size())
+		if sa.size.x > 0 and sa.size.y > 0:
+			l = maxf(0.0, sa.position.x) * k.x
+			t = maxf(0.0, sa.position.y) * k.y
+			r = maxf(0.0, ss.x - sa.end.x) * k.x
+			b = maxf(0.0, ss.y - sa.end.y) * k.y
+		b = maxf(b, 14.0)
+	else:
+		var usable := DisplayServer.screen_get_usable_rect(DisplayServer.window_get_current_screen())
+		var wp := Vector2(DisplayServer.window_get_position())
+		if DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_WINDOWED:
+			var over_b := (wp.y + ws.y) - float(usable.end.y)
+			var over_r := (wp.x + ws.x) - float(usable.end.x)
+			b = maxf(0.0, over_b) * k.y
+			r = maxf(0.0, over_r) * k.x
+			# pequena folga para bordas/sombra da janela
+			b += 6.0
+	var m := hud_margin
+	insets = Vector4(clampf(l + m, 0.0, 300.0), clampf(t + m, 0.0, 300.0), clampf(r + m, 0.0, 300.0), clampf(b + m, 0.0, 300.0))
 
 
 func use_touch() -> bool:
@@ -170,8 +202,10 @@ func save_settings() -> void:
 	c.set_value("s", "volume", volume)
 	c.set_value("s", "hud_scale", hud_scale)
 	c.set_value("s", "hud_margin", hud_margin)
-	c.set_value("s", "show_crosshair", show_crosshair)
-	c.set_value("s", "skin", skin)
+	c.set_value("s", "show_hand", show_hand)
+	c.set_value("s", "particles", particles)
+	c.set_value("s", "custom_servers", custom_servers)
+	c.set_value("s", "touch_layout_v", 2)
 	c.save(SAVE_PATH)
 
 
@@ -185,7 +219,7 @@ func load_settings() -> void:
 			if keys.has(id):
 				keys[id] = k[id]
 	var t = c.get_value("s", "touch_layout", {})
-	if t is Dictionary:
+	if t is Dictionary and int(c.get_value("s", "touch_layout_v", 1)) >= 2:
 		for id in t:
 			if touch_layout.has(id):
 				touch_layout[id] = t[id]
@@ -200,11 +234,10 @@ func load_settings() -> void:
 	player_name = c.get_value("s", "player_name", player_name)
 	last_ip = c.get_value("s", "last_ip", last_ip)
 	volume = c.get_value("s", "volume", volume)
-	hud_scale = clampf(float(c.get_value("s", "hud_scale", hud_scale)), 0.6, 1.8)
-	hud_margin = clampf(float(c.get_value("s", "hud_margin", hud_margin)), 0.0, 240.0)
-	show_crosshair = bool(c.get_value("s", "show_crosshair", show_crosshair))
-	var sk = c.get_value("s", "skin", {})
-	if sk is Dictionary:
-		for k in sk:
-			if skin.has(k) and sk[k] is Color:
-				skin[k] = sk[k]
+	hud_scale = c.get_value("s", "hud_scale", hud_scale)
+	hud_margin = c.get_value("s", "hud_margin", hud_margin)
+	show_hand = c.get_value("s", "show_hand", show_hand)
+	particles = c.get_value("s", "particles", particles)
+	var cs = c.get_value("s", "custom_servers", [])
+	if cs is Array:
+		custom_servers = cs

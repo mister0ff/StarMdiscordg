@@ -10,8 +10,6 @@ var _font: Font
 var _name_t := 0.0
 var _last_id := -2
 var _last_sel := -1
-var _title := ""
-var _title_t := 0.0
 
 
 func _ready() -> void:
@@ -65,11 +63,6 @@ func _overlay(c: Color) -> ColorRect:
 	return r
 
 
-func show_title(t: String) -> void:
-	_title = t
-	_title_t = 4.0
-
-
 func flash_damage() -> void:
 	_hit_alpha = 0.45
 
@@ -92,15 +85,21 @@ func _process(delta: float) -> void:
 	_hit_alpha = maxf(0.0, _hit_alpha - delta * 1.2)
 	_dmg.color.a = _hit_alpha
 	_name_t = maxf(0.0, _name_t - delta)
-	_title_t = maxf(0.0, _title_t - delta)
 	queue_redraw()
 
 
+func _area() -> Rect2:
+	var vs := get_viewport_rect().size
+	var i := Settings.insets
+	return Rect2(i.x, i.y, maxf(100.0, vs.x - i.x - i.z), maxf(100.0, vs.y - i.y - i.w))
+
+
 func _metrics() -> Array:
-	var vr := Util.hud_rect(get_viewport())
-	var sl := clampf(minf(vr.size.x / 11.0, 58.0) * Settings.hud_scale, 30.0, 96.0)
-	var x0 := vr.position.x + (vr.size.x - sl * 9.0) * 0.5
-	var y0 := vr.end.y - sl - 8.0
+	var ar := _area()
+	var sl := clampf(minf(ar.size.x / 11.0, ar.size.y / 9.5), 30.0, 62.0) * Settings.hud_scale
+	sl = minf(sl, ar.size.x / 9.6)
+	var x0 := ar.position.x + (ar.size.x - sl * 9.0) * 0.5
+	var y0 := ar.end.y - sl - 4.0
 	return [x0, y0, sl]
 
 
@@ -120,12 +119,10 @@ func _draw() -> void:
 	var x0: float = m[0]
 	var y0: float = m[1]
 	var sl: float = m[2]
-	if not p.ui_open and Settings.show_crosshair:
+	if not p.ui_open:
 		var c := get_viewport_rect().size * 0.5
-		draw_rect(Rect2(c.x - 11, c.y - 3, 22, 6), Color(0, 0, 0, 0.7))
-		draw_rect(Rect2(c.x - 3, c.y - 11, 6, 22), Color(0, 0, 0, 0.7))
-		draw_rect(Rect2(c.x - 9, c.y - 1, 18, 2), Color(1, 1, 1, 0.95))
-		draw_rect(Rect2(c.x - 1, c.y - 9, 2, 18), Color(1, 1, 1, 0.95))
+		draw_rect(Rect2(c.x - 9, c.y - 1, 18, 2), Color(1, 1, 1, 0.8))
+		draw_rect(Rect2(c.x - 1, c.y - 9, 2, 18), Color(1, 1, 1, 0.8))
 	for i in 9:
 		var r := Rect2(x0 + i * sl, y0, sl, sl)
 		draw_rect(r, Color(0, 0, 0, 0.5))
@@ -134,11 +131,11 @@ func _draw() -> void:
 		if id != 0:
 			var tex := Blocks.icon(id)
 			if tex != null:
-				draw_texture_rect(tex, Rect2(r.position + Vector2(7, 7), Vector2(sl - 14, sl - 14)), false)
+				draw_texture_rect(tex, Rect2(r.position + Vector2(4, 4), Vector2(sl - 8, sl - 8)), false)
 			var n := p.inv.get_count(i)
 			if n > 1:
 				draw_string(_font, Vector2(r.position.x, r.end.y - 5), str(n), HORIZONTAL_ALIGNMENT_RIGHT, sl - 4, 16, Color.WHITE)
-			if Blocks.has_dur(id):
+			if Blocks.is_tool(id):
 				var ratio := float(p.inv.slots[i][2]) / float(Blocks.max_dur(id))
 				if ratio < 0.999:
 					draw_rect(Rect2(r.position.x + 5, r.end.y - 6, (sl - 10), 3), Color(0, 0, 0, 0.8))
@@ -151,7 +148,7 @@ func _draw() -> void:
 		_last_sel = p.selected
 		_name_t = 2.0
 	if _name_t > 0.0 and sid != 0:
-		draw_string(_font, Vector2(0, y0 - 56), Blocks.name_of(sid), HORIZONTAL_ALIGNMENT_CENTER, size.x, 20, Color(1, 1, 1, clampf(_name_t, 0.0, 1.0)))
+		draw_string(_font, Vector2(0, y0 - 56 - Settings.hud_scale * 6.0), Blocks.name_of(sid), HORIZONTAL_ALIGNMENT_CENTER, get_viewport_rect().size.x, 20, Color(1, 1, 1, clampf(_name_t, 0.0, 1.0)))
 	if not main.creative_mode:
 		var hy := y0 - 28.0
 		var hs := minf(sl * 0.34, 20.0)
@@ -175,11 +172,6 @@ func _draw() -> void:
 			var nb := int(ceil(p.air))
 			for i in nb:
 				draw_circle(Vector2(x0 + sl * 9.0 - (i + 1) * (hs + 2) + hs * 0.5 + 2, hy - hs), hs * 0.4, Color(0.6, 0.85, 1.0, 0.9))
-	if _title_t > 0.0 and _title != "":
-		var vs := get_viewport_rect().size
-		var a := clampf(_title_t, 0.0, 1.0)
-		draw_string(_font, Vector2(2, vs.y * 0.3 + 2), _title, HORIZONTAL_ALIGNMENT_CENTER, vs.x, 56, Color(0, 0, 0, a))
-		draw_string(_font, Vector2(0, vs.y * 0.3), _title, HORIZONTAL_ALIGNMENT_CENTER, vs.x, 56, Color(1, 1, 1, a))
 	var info := ""
 	if Settings.show_fps:
 		var gp := p.global_position
@@ -188,6 +180,6 @@ func _draw() -> void:
 	elif main.online:
 		info = "Online"
 	if info != "":
-		draw_string(_font, Vector2(12, 28), info, HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color(1, 1, 1, 0.9))
+		draw_string(_font, Vector2(_area().position.x + 12, _area().position.y + 28), info, HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color(1, 1, 1, 0.9))
 	if p.flying:
-		draw_string(_font, Vector2(12, 52), "Voando", HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(0.7, 0.9, 1, 0.9))
+		draw_string(_font, Vector2(_area().position.x + 12, _area().position.y + 52), "Voando", HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(0.7, 0.9, 1, 0.9))

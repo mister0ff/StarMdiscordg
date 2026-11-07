@@ -35,22 +35,20 @@ func _process(_dt: float) -> void:
 			m.player_place_block(pos, B.PLANKS)
 			check(m.world.get_block(pos.x, pos.y, pos.z) == B.PLANKS, "bloco colocado")
 		270:
-			# crafting
-			p.inv.add(B.LOG, 3)
-			var r: Dictionary = B.recipes[0]
-			check(p.inv.craft(r, false, false), "craft tábuas")
-			check(p.inv.count_of(B.PLANKS) == 4, "4 tábuas")
-			p.inv.add(B.PLANKS, 20)
-			p.inv.add(B.STICK, 10)
+			var g1: Dictionary = B.match_recipe([B.LOG, 0, 0, 0], 2, 2)
+			check(not g1.is_empty() and g1["out"] == B.PLANKS, "receita: tábuas")
+			var P: int = B.PLANKS
+			var S: int = B.STICK
+			var g2: Dictionary = B.match_recipe([P, P, P, 0, S, 0, 0, S, 0], 3, 3)
+			check(not g2.is_empty() and g2["out"] == B.TOOL_BASE + B.KIND_PICK, "receita: picareta de madeira")
+			check(B.match_recipe([P, 0, 0, 0, 0, 0, 0, 0, 0], 3, 3).is_empty(), "grade invalida nao gera nada")
 			var pick: int = B.TOOL_BASE + B.KIND_PICK
-			var rr: Dictionary = {}
-			for x in B.recipes:
-				if x["out"] == pick:
-					rr = x
-			check(p.inv.craft(rr, true, false), "craft picareta de madeira")
-			check(p.inv.count_of(pick) == 1, "picareta no inventário")
 			check(B.break_time(B.STONE, pick) < B.break_time(B.STONE, 0), "picareta acelera pedra")
-			check(not B.can_harvest(B.IRON_ORE, pick), "madeira não colhe ferro")
+			check(not B.can_harvest(B.IRON_ORE, pick), "madeira nao colhe ferro")
+			check(B.smelt_result(B.IRON_ORE) == B.IRON_INGOT, "fornalha: minerio vira barra")
+			var cs: Array = [[B.COBBLE, 5, 0], null]
+			var cur = Containers.click(cs, 0, 2, null)
+			check(cur != null and cur[1] == 3 and cs[0][1] == 2, "clique direito pega metade")
 		300:
 			# noite + mobs
 			m.time_of_day = 0.78
@@ -89,6 +87,9 @@ func _process(_dt: float) -> void:
 			m.chat_ui.close()
 			m.open_inventory()
 			check(m.inv_ui.visible, "inventário abre")
+			m.close_inventory()
+			m._open_ui("table")
+			check(m.inv_ui.visible, "mesa abre")
 			m.close_inventory()
 			m.pause_game()
 			check(m.menu.visible, "pausa abre")
